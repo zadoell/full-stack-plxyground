@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "PLXYGROUND",
+    "slug": "plxyground",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "plxyground",
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}

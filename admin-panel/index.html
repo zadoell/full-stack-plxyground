@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PLXYGROUND Admin</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="toast-container" class="toast-container"></div>
+  <div id="modal-root"></div>
+
+  <!-- Login Page -->
+  <div id="login-page" class="login-container">
+    <div class="login-card">
+      <div style="text-align:center;margin-bottom:24px;">
+        <div style="font-size:28px;font-weight:800;letter-spacing:2px;color:#111;">PLXYGROUND</div>
+        <div style="font-size:13px;color:#6b7280;margin-top:4px;">Admin Panel</div>
+      </div>
+      <h2 class="login-title">Admin Login</h2>
+      <p class="login-subtitle">Sign in to manage the platform</p>
+      <label class="form-label">Email</label>
+      <input type="email" id="login-email" class="form-input" placeholder="admin@plxyground.local" autocomplete="email">
+      <label class="form-label">Password</label>
+      <input type="password" id="login-password" class="form-input" placeholder="Enter password" autocomplete="current-password">
+      <div id="login-error" style="color:#dc2626;font-size:13px;margin-top:12px;display:none;"></div>
+      <button id="login-btn" class="btn btn-primary btn-full" style="margin-top:20px;" onclick="handleLogin()">Sign In</button>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div id="app-page" class="app hidden">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">PLXYGROUND</div>
+      <nav class="sidebar-nav">
+        <button class="sidebar-item active" data-page="queue" onclick="navigate('queue')"><span class="sidebar-item-icon">📋</span> Queue</button>
+        <button class="sidebar-item" data-page="content" onclick="navigate('content')"><span class="sidebar-item-icon">📝</span> Content</button>
+        <button class="sidebar-item" data-page="users" onclick="navigate('users')"><span class="sidebar-item-icon">👥</span> Users</button>
+        <button class="sidebar-item" data-page="audit" onclick="navigate('audit')"><span class="sidebar-item-icon">📜</span> Audit Log</button>
+        <button class="sidebar-item" data-page="analytics" onclick="navigate('analytics')"><span class="sidebar-item-icon">📊</span> Analytics</button>
+        <button class="sidebar-item" data-page="alerts" onclick="navigate('alerts')"><span class="sidebar-item-icon">🔔</span> Live Alerts</button>
+        <button class="sidebar-item" data-page="security" onclick="navigate('security')"><span class="sidebar-item-icon">🔒</span> Admin Security</button>
+      </nav>
+      <div class="sidebar-footer">
+        <button class="sidebar-item" onclick="handleSignOut()"><span class="sidebar-item-icon">🚪</span> Sign Out</button>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="main">
+      <div class="topbar">
+        <div class="topbar-title" id="page-title">Queue</div>
+        <div class="topbar-right">
+          <input type="text" class="topbar-search" id="global-search" placeholder="Quick search…" oninput="handleGlobalSearch(this.value)">
+          <button class="btn btn-ghost btn-sm" onclick="navigate('security')">🔒 Security</button>
+        </div>
+      </div>
+      <div class="page-content" id="page-content"></div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

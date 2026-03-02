@@ -1,0 +1,11 @@
+{
+  "name": "plxyground-admin",
+  "version": "1.0.0",
+  "description": "PLXYGROUND Admin Panel",
+  "scripts": {
+    "start": "npx serve -s . -l 3012 --no-clipboard"
+  },
+  "dependencies": {
+    "serve": "^14.2.0"
+  }
+}
