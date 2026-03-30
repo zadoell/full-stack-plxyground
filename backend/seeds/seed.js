@@ -1,8 +1,27 @@
-// Seed script – idempotent (checks before inserting)
+// Seed script – idempotent (checks before inserting) – Supabase version
 const bcrypt = require('bcrypt');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
-const db = require('../src/db');
+
+// Require seed passwords to be supplied via environment variables
+if (!process.env.SEED_ADMIN_PASSWORD) {
+  console.error('ABORT: SEED_ADMIN_PASSWORD environment variable is required.');
+  console.error('  Set it in your .env file before running the seed script.');
+  process.exit(1);
+}
+if (!process.env.SEED_USER_PASSWORD) {
+  console.error('ABORT: SEED_USER_PASSWORD environment variable is required.');
+  console.error('  Set it in your .env file before running the seed script.');
+  process.exit(1);
+}
+
+// Safety: prevent accidental seeding in production
+if (process.env.NODE_ENV === 'production' && !process.env.SEED_FORCE) {
+  console.error('ABORT: Cannot seed in production. Set SEED_FORCE=1 to override.');
+  process.exit(1);
+}
+
+const supabase = require('../src/db');
 
 const SALT_ROUNDS = 10;
 
@@ -39,6 +58,12 @@ const BUSINESS_NAMES = [
   { name: 'Under Armour Pro', email: 'underarmour@plxyground.local' },
 ];
 
+const ATHLETE_NAMES = [
+  { name: 'LeBron James Jr', email: 'lebron@plxyground.local' },
+  { name: 'Simone Grant', email: 'simone@plxyground.local' },
+  { name: 'Usain Williams', email: 'usain@plxyground.local' },
+];
+
 const CONTENT_BODIES = [
   `The morning session started at 5 AM with a grueling track workout. Coach had us doing 400m repeats — ten of them — with only 90 seconds rest between each. By the sixth rep, my legs were screaming, but I kept pushing through. This is what separates champions from everyone else. The mental game is just as important as the physical one.\n\nAfter the track work, we moved into the weight room for a full-body strength circuit. Deadlifts, box jumps, medicine ball throws. Every muscle fiber engaged. Recovery starts with a proper cool-down and nutrition within 30 minutes of finishing.`,
 
@@ -62,14 +87,24 @@ const CONTENT_BODIES = [
 ];
 
 async function seed() {
-  console.log('🌱 Seeding PLXYGROUND database...');
+  console.log('🌱 Seeding PLXYGROUND database (Supabase)...');
 
   // ── Admin ──
-  const adminExists = db.prepare('SELECT id FROM admins WHERE email = ?').get('admin@plxyground.local');
+  const { data: adminExists } = await supabase
+    .from('admins')
+    .select('id')
+    .eq('email', 'admin@plxyground.local')
+    .maybeSingle();
+
   if (!adminExists) {
-    const hash = await bcrypt.hash('Internet2026@', SALT_ROUNDS);
-    db.prepare('INSERT INTO admins (email, password_hash, role, is_active) VALUES (?, ?, ?, ?)')
-      .run('admin@plxyground.local', hash, 'ADMIN', 1);
+    const hash = await bcrypt.hash(process.env.SEED_ADMIN_PASSWORD, SALT_ROUNDS);
+    const { error } = await supabase.from('admins').insert({
+      email: 'admin@plxyground.local',
+      password_hash: hash,
+      role: 'ADMIN',
+      is_active: true,
+    });
+    if (error) throw error;
     console.log('  ✓ Admin seeded');
   } else {
     console.log('  ⏭ Admin already exists');
@@ -81,29 +116,42 @@ async function seed() {
     const name = CREATOR_NAMES[i];
     const slug = name.toLowerCase().replace(/\s+/g, '-');
     const email = i === 0 ? 'sarahjohnson@plxyground.local' : `${slug}@plxyground.local`;
-    
-    const existing = db.prepare('SELECT id FROM creators WHERE profile_slug = ?').get(slug);
+
+    const { data: existing } = await supabase
+      .from('creators')
+      .select('id')
+      .eq('profile_slug', slug)
+      .maybeSingle();
+
     if (existing) {
       creatorIds.push(existing.id);
       continue;
     }
-    
-    const result = db.prepare(
-      'INSERT INTO creators (name, role, bio, location, profile_slug, social_links, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(
-      name, 'creator',
-      `Professional athlete and content creator. Passionate about sports, fitness, and inspiring the next generation. Based in various cities, sharing the journey one post at a time.`,
-      ['New York', 'Los Angeles', 'Chicago', 'Miami', 'London', 'Toronto', 'Sydney', 'Tokyo', 'Berlin', 'Paris'][i],
-      slug,
-      JSON.stringify({ twitter: `@${slug}`, instagram: `@${slug}_sports` }),
-      1
-    );
-    creatorIds.push(result.lastInsertRowid);
 
-    const passHash = await bcrypt.hash('Password1!', SALT_ROUNDS);
-    db.prepare(
-      'INSERT INTO creator_accounts (creator_id, email, password_hash, is_approved) VALUES (?, ?, ?, ?)'
-    ).run(result.lastInsertRowid, email, passHash, 1);
+    const { data: creator, error: crErr } = await supabase
+      .from('creators')
+      .insert({
+        name,
+        role: 'creator',
+        bio: 'Professional athlete and content creator. Passionate about sports, fitness, and inspiring the next generation. Based in various cities, sharing the journey one post at a time.',
+        location: ['New York', 'Los Angeles', 'Chicago', 'Miami', 'London', 'Toronto', 'Sydney', 'Tokyo', 'Berlin', 'Paris'][i],
+        profile_slug: slug,
+        social_links: { twitter: `@${slug}`, instagram: `@${slug}_sports` },
+        is_active: true,
+      })
+      .select('id')
+      .single();
+    if (crErr) throw crErr;
+    creatorIds.push(creator.id);
+
+    const passHash = await bcrypt.hash(process.env.SEED_USER_PASSWORD, SALT_ROUNDS);
+    const { error: acErr } = await supabase.from('creator_accounts').insert({
+      creator_id: creator.id,
+      email,
+      password_hash: passHash,
+      is_approved: true,
+    });
+    if (acErr) throw acErr;
   }
   console.log(`  ✓ ${CREATOR_NAMES.length} Creators seeded`);
 
@@ -111,33 +159,93 @@ async function seed() {
   for (let i = 0; i < BUSINESS_NAMES.length; i++) {
     const biz = BUSINESS_NAMES[i];
     const slug = biz.name.toLowerCase().replace(/\s+/g, '-');
-    const existing = db.prepare('SELECT id FROM creators WHERE profile_slug = ?').get(slug);
+
+    const { data: existing } = await supabase
+      .from('creators')
+      .select('id')
+      .eq('profile_slug', slug)
+      .maybeSingle();
+
     if (existing) {
       creatorIds.push(existing.id);
       continue;
     }
 
-    const result = db.prepare(
-      'INSERT INTO creators (name, role, bio, location, profile_slug, social_links, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(
-      biz.name, 'business',
-      `Leading sports brand committed to performance and innovation.`,
-      'Global',
-      slug,
-      JSON.stringify({ website: `https://${slug}.com` }),
-      1
-    );
-    creatorIds.push(result.lastInsertRowid);
+    const { data: creator, error: crErr } = await supabase
+      .from('creators')
+      .insert({
+        name: biz.name,
+        role: 'business',
+        bio: 'Leading sports brand committed to performance and innovation.',
+        location: 'Global',
+        profile_slug: slug,
+        social_links: { website: `https://${slug}.com` },
+        is_active: true,
+      })
+      .select('id')
+      .single();
+    if (crErr) throw crErr;
+    creatorIds.push(creator.id);
 
-    const passHash = await bcrypt.hash('Password1!', SALT_ROUNDS);
-    db.prepare(
-      'INSERT INTO creator_accounts (creator_id, email, password_hash, is_approved) VALUES (?, ?, ?, ?)'
-    ).run(result.lastInsertRowid, biz.email, passHash, 1);
+    const passHash = await bcrypt.hash(process.env.SEED_USER_PASSWORD, SALT_ROUNDS);
+    const { error: acErr } = await supabase.from('creator_accounts').insert({
+      creator_id: creator.id,
+      email: biz.email,
+      password_hash: passHash,
+      is_approved: true,
+    });
+    if (acErr) throw acErr;
   }
   console.log(`  ✓ ${BUSINESS_NAMES.length} Businesses seeded`);
 
+  // ── Athletes (3) ──
+  for (let i = 0; i < ATHLETE_NAMES.length; i++) {
+    const ath = ATHLETE_NAMES[i];
+    const slug = ath.name.toLowerCase().replace(/\s+/g, '-');
+
+    const { data: existing } = await supabase
+      .from('creators')
+      .select('id')
+      .eq('profile_slug', slug)
+      .maybeSingle();
+
+    if (existing) {
+      creatorIds.push(existing.id);
+      continue;
+    }
+
+    const { data: creator, error: crErr } = await supabase
+      .from('creators')
+      .insert({
+        name: ath.name,
+        role: 'athlete',
+        bio: 'Professional athlete competing at the highest level. Training, competing, and sharing the journey.',
+        location: ['Miami', 'Houston', 'Kingston'][i],
+        profile_slug: slug,
+        social_links: { twitter: `@${slug.replace(/-/g, '')}`, instagram: `@${slug.replace(/-/g, '')}_athlete` },
+        is_active: true,
+      })
+      .select('id')
+      .single();
+    if (crErr) throw crErr;
+    creatorIds.push(creator.id);
+
+    const passHash = await bcrypt.hash(process.env.SEED_USER_PASSWORD, SALT_ROUNDS);
+    const { error: acErr } = await supabase.from('creator_accounts').insert({
+      creator_id: creator.id,
+      email: ath.email,
+      password_hash: passHash,
+      is_approved: true,
+    });
+    if (acErr) throw acErr;
+  }
+  console.log(`  ✓ ${ATHLETE_NAMES.length} Athletes seeded`);
+
   // ── Content (10 posts per creator = 100+) ──
-  const existingCount = db.prepare('SELECT COUNT(*) as c FROM content').get().c;
+  const { count: existingCount } = await supabase
+    .from('content')
+    .select('*', { count: 'exact', head: true });
+
   if (existingCount === 0) {
     const titles = [
       'Morning Training Breakdown', 'Game Film Analysis', 'Arena Photoshoot BTS',
@@ -146,37 +254,55 @@ async function seed() {
       'Gear Review: Carbon Plates'
     ];
 
-    // Spread created_at over the last 30 days for analytics
     const now = Date.now();
     let postIndex = 0;
     for (let ci = 0; ci < creatorIds.length; ci++) {
       for (let pi = 0; pi < 10; pi++) {
         const daysAgo = Math.floor(Math.random() * 30);
-        const createdAt = new Date(now - daysAgo * 86400000).toISOString().replace('T', ' ').slice(0, 19);
-        const isPublished = postIndex % 5 !== 0 ? 1 : 0; // ~80% published, ~20% pending
+        const createdAt = new Date(now - daysAgo * 86400000).toISOString();
+        const isPublished = postIndex % 5 !== 0;
         const contentType = CONTENT_TYPES[postIndex % 3];
         const mediaUrl = MEDIA_URLS[postIndex % MEDIA_URLS.length];
         const body = CONTENT_BODIES[pi % CONTENT_BODIES.length];
         const title = `${titles[pi % titles.length]} #${postIndex + 1}`;
 
-        db.prepare(`
-          INSERT INTO content (creator_id, content_type, title, body, media_url, order_priority, is_published, published_at, feed_rank_at, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          creatorIds[ci], contentType, title, body, mediaUrl,
-          postIndex, isPublished,
-          isPublished ? createdAt : null,
-          isPublished ? createdAt : null,
-          createdAt, createdAt
-        );
+        const { data: contentRow, error: cErr } = await supabase
+          .from('content')
+          .insert({
+            creator_id: creatorIds[ci],
+            content_type: contentType,
+            title,
+            body,
+            media_url: mediaUrl,
+            order_priority: postIndex,
+            is_published: isPublished,
+            published_at: isPublished ? createdAt : null,
+            feed_rank_at: isPublished ? createdAt : null,
+            created_at: createdAt,
+            updated_at: createdAt,
+          })
+          .select('id')
+          .single();
+        if (cErr) throw cErr;
 
         // Add pending content to moderation queue
         if (!isPublished) {
-          const creatorName = db.prepare('SELECT name FROM creators WHERE id = ?').get(creatorIds[ci])?.name || 'Unknown';
-          db.prepare(`
-            INSERT INTO moderation_queue (type, status, title_or_name, submitted_by, report_count, entity_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `).run('content', 'pending', title, creatorName, 0, postIndex + 1, createdAt);
+          const { data: creatorRow } = await supabase
+            .from('creators')
+            .select('name')
+            .eq('id', creatorIds[ci])
+            .maybeSingle();
+          const creatorName = creatorRow?.name || 'Unknown';
+
+          await supabase.from('moderation_queue').insert({
+            type: 'content',
+            status: 'pending',
+            title_or_name: title,
+            submitted_by: creatorName,
+            report_count: 0,
+            entity_id: contentRow.id,
+            created_at: createdAt,
+          });
         }
 
         postIndex++;
@@ -188,7 +314,10 @@ async function seed() {
   }
 
   // ── Opportunities (8) ──
-  const oppCount = db.prepare('SELECT COUNT(*) as c FROM opportunities').get().c;
+  const { count: oppCount } = await supabase
+    .from('opportunities')
+    .select('*', { count: 'exact', head: true });
+
   if (oppCount === 0) {
     const opps = [
       { title: 'Brand Ambassador – Nike Running', role_type: 'ambassador', body: 'Join our team of elite runners representing Nike at national events.', requirements: 'Active social media, 10k+ followers, competitive running background', benefits: 'Product sponsorship, event access, monthly stipend' },
@@ -201,28 +330,34 @@ async function seed() {
       { title: 'Photographer – Event Coverage', role_type: 'photographer', body: 'Capture high-energy sports moments at live events.', requirements: 'Professional camera equipment, sports portfolio', benefits: 'Event fee, image licensing, credential access' },
     ];
     for (const opp of opps) {
-      // Assign to a random business account
       const bizCreatorId = creatorIds[creatorIds.length - Math.floor(Math.random() * 3) - 1];
-      db.prepare(`
-        INSERT INTO opportunities (creator_id, title, role_type, body, requirements, benefits, is_published)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(bizCreatorId, opp.title, opp.role_type, opp.body, opp.requirements, opp.benefits, 1);
+      const { error } = await supabase.from('opportunities').insert({
+        creator_id: bizCreatorId,
+        title: opp.title,
+        role_type: opp.role_type,
+        body: opp.body,
+        requirements: opp.requirements,
+        benefits: opp.benefits,
+        is_published: true,
+      });
+      if (error) throw error;
     }
     console.log(`  ✓ ${opps.length} Opportunities seeded`);
   }
 
   // ── Audit log entries ──
-  const auditCount = db.prepare('SELECT COUNT(*) as c FROM audit_log').get().c;
+  const { count: auditCount } = await supabase
+    .from('audit_log')
+    .select('*', { count: 'exact', head: true });
+
   if (auditCount === 0) {
     const entries = [
       { action_type: 'admin.login', actor: 'admin@plxyground.local', target: 'system', reason: 'Initial login' },
       { action_type: 'content.approve', actor: 'admin@plxyground.local', target: 'content:2', reason: 'Quality content' },
       { action_type: 'user.create', actor: 'system', target: 'sarah-johnson', reason: 'Self-registration' },
     ];
-    for (const e of entries) {
-      db.prepare('INSERT INTO audit_log (action_type, actor, target, reason) VALUES (?, ?, ?, ?)')
-        .run(e.action_type, e.actor, e.target, e.reason);
-    }
+    const { error } = await supabase.from('audit_log').insert(entries);
+    if (error) throw error;
     console.log('  ✓ Audit log entries seeded');
   }
 

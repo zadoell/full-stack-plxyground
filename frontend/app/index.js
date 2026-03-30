@@ -1,129 +1,365 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Image } from 'react-native';
+import React, { useState, useRef } from 'react';
+import {
+  View, Text, TouchableOpacity, ScrollView,
+  StyleSheet, useWindowDimensions, Animated,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../src/context/AuthContext';
 
-const HERO_BG = 'https://images.unsplash.com/photo-1461896836934-bd45ba8fcb36?w=1600';
-
-const FEATURES = [
-  { icon: '🛡️', title: 'Moderation', desc: 'Content reviewed and approved by our admin team before going live.' },
-  { icon: '📊', title: 'Analytics', desc: 'Track engagement, content performance, and growth metrics in real-time.' },
-  { icon: '🤝', title: 'Opportunities', desc: 'Connect creators with brands for sponsorships, campaigns, and collaborations.' },
-  { icon: '🔒', title: 'Secure Admin', desc: 'Enterprise-grade admin panel with audit logging and role-based access.' },
+const SLIDES = [
+  {
+    accent: '#FF3D00',
+    symbol: '⚡',
+    eyebrow: 'WELCOME TO',
+    title: 'PLXYGROUND',
+    subtitle: 'The home of sports creators, athletes, and brands. Built for the next generation of sport.',
+  },
+  {
+    accent: '#00CFFF',
+    symbol: '🎯',
+    eyebrow: 'CREATE & SHARE',
+    title: 'Your Content,\nYour Rules',
+    subtitle: 'Post articles, videos, and image stories. Build your public profile and grow your audience.',
+  },
+  {
+    accent: '#FFD100',
+    symbol: '🤝',
+    eyebrow: 'OPPORTUNITIES',
+    title: 'Land Real\nSponsorships',
+    subtitle: 'Connect directly with sports brands. Find collabs and campaigns built for creators like you.',
+  },
 ];
 
-const BRANDS = ['Nike Sports', 'Adidas Athletics', 'Under Armour Pro'];
-
-export default function LandingScreen() {
+export default function OnboardingScreen() {
   const router = useRouter();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, loading } = useAuth();
+  const { width, height } = useWindowDimensions();
+  const [activeIndex, setActiveIndex] = useState(0);
+  const scrollRef = useRef(null);
 
   React.useEffect(() => {
-    if (isAuthenticated) router.replace('/feed');
-  }, [isAuthenticated]);
+    if (!loading && isAuthenticated) router.replace('/dashboard');
+  }, [loading, isAuthenticated]);
+
+  const handleScroll = (e) => {
+    const index = Math.round(e.nativeEvent.contentOffset.x / width);
+    setActiveIndex(index);
+  };
+
+  const slide = SLIDES[activeIndex];
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
-      {/* Nav */}
-      <View style={styles.nav}>
-        <Text style={styles.logo}>PLXYGROUND</Text>
-        <View style={styles.navLinks}>
-          <TouchableOpacity onPress={() => { /* scroll to features */ }} accessibilityRole="link"><Text style={styles.navLink}>Features</Text></TouchableOpacity>
-          <TouchableOpacity onPress={() => router.push('/terms')} accessibilityRole="link"><Text style={styles.navLink}>Help</Text></TouchableOpacity>
-          <TouchableOpacity onPress={() => router.push('/login')} accessibilityRole="link"><Text style={styles.navLinkLogin}>Login</Text></TouchableOpacity>
-        </View>
+    <View style={styles.container}>
+
+      {/* ── Decorative background blobs ── */}
+      <View style={[styles.blob, styles.blobTL, { backgroundColor: slide.accent + '18' }]} />
+      <View style={[styles.blob, styles.blobBR, { backgroundColor: slide.accent + '0D' }]} />
+
+      {/* ── Logo bar ── */}
+      <View style={styles.topBar}>
+        <Text style={styles.logoText}>
+          PLXY<Text style={[styles.logoAccent, { color: slide.accent }]}>GROUND</Text>
+        </Text>
       </View>
 
-      {/* Hero */}
-      <View style={styles.hero}>
-        <Image source={{ uri: HERO_BG }} style={styles.heroBg} resizeMode="cover" accessibilityLabel="Sports stadium background" />
-        <View style={styles.heroOverlay} />
-        <View style={styles.heroContent}>
-          <Text style={styles.heroTitle}>Where creators and brands connect in sports</Text>
-          <Text style={styles.heroSubtitle}>The platform for athletes, creators, and sports brands to collaborate, create content, and grow together.</Text>
-          <View style={styles.heroCTAs}>
-            <TouchableOpacity style={styles.primaryBtn} onPress={() => router.push('/signup')} accessibilityRole="button" accessibilityLabel="Get Started - Creator signup">
-              <Text style={styles.primaryBtnText}>Get Started</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.push('/business-signup')} accessibilityRole="button" accessibilityLabel="I'm a Business - Business signup">
-              <Text style={styles.secondaryBtnText}>I'm a Business</Text>
-            </TouchableOpacity>
+      {/* ── Slides ── */}
+      <ScrollView
+        ref={scrollRef}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+        style={{ flex: 1 }}
+        contentContainerStyle={{ width: width * SLIDES.length }}
+      >
+        {SLIDES.map((s, i) => (
+          <View key={i} style={[styles.slide, { width }]}>
+
+            {/* Icon visual */}
+            <View style={styles.visualArea}>
+              {/* Outer ring */}
+              <View style={[styles.ring, styles.ringOuter, { borderColor: s.accent + '20' }]} />
+              {/* Mid ring */}
+              <View style={[styles.ring, styles.ringMid, { borderColor: s.accent + '35' }]} />
+              {/* Inner filled circle */}
+              <View style={[styles.iconCircle, { backgroundColor: s.accent }]}>
+                <Text style={styles.iconSymbol}>{s.symbol}</Text>
+              </View>
+              {/* Corner accent marks */}
+              <View style={[styles.cornerMark, styles.cornerTL, { borderColor: s.accent + '60' }]} />
+              <View style={[styles.cornerMark, styles.cornerBR, { borderColor: s.accent + '60' }]} />
+            </View>
+
+            {/* Text content */}
+            <View style={styles.textArea}>
+              <Text style={[styles.eyebrow, { color: s.accent }]}>{s.eyebrow}</Text>
+              <Text style={styles.slideTitle}>{s.title}</Text>
+              <Text style={styles.slideSubtitle}>{s.subtitle}</Text>
+            </View>
+
           </View>
-        </View>
+        ))}
+      </ScrollView>
+
+      {/* ── Dot indicators ── */}
+      <View style={styles.dots}>
+        {SLIDES.map((s, i) => (
+          <View
+            key={i}
+            style={[
+              styles.dot,
+              i === activeIndex
+                ? [styles.dotActive, { backgroundColor: slide.accent, width: 24 }]
+                : styles.dotInactive,
+            ]}
+          />
+        ))}
       </View>
 
-      {/* Features */}
-      <View style={styles.features}>
-        <Text style={styles.sectionTitle}>Why PLXYGROUND?</Text>
-        <View style={styles.featureGrid}>
-          {FEATURES.map((f, i) => (
-            <View key={i} style={styles.featureCard}>
-              <Text style={styles.featureIcon}>{f.icon}</Text>
-              <Text style={styles.featureTitle}>{f.title}</Text>
-              <Text style={styles.featureDesc}>{f.desc}</Text>
-            </View>
-          ))}
-        </View>
+      {/* ── CTA buttons ── */}
+      <View style={styles.ctas}>
+        <TouchableOpacity
+          style={[styles.primaryBtn, { backgroundColor: slide.accent }]}
+          onPress={() => router.push('/signup-choice')}
+          accessibilityRole="button"
+          accessibilityLabel="Get started"
+        >
+          <Text style={styles.primaryBtnText}>GET STARTED</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.secondaryBtn}
+          onPress={() => router.push('/login')}
+          accessibilityRole="button"
+          accessibilityLabel="Sign in"
+        >
+          <Text style={styles.secondaryBtnText}>Already have an account? <Text style={[styles.secondaryBtnLink, { color: slide.accent }]}>Sign In</Text></Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Trust Bar */}
-      <View style={styles.trustBar}>
-        <Text style={styles.trustTitle}>Trusted by leading sports brands</Text>
-        <View style={styles.trustLogos}>
-          {BRANDS.map((b, i) => (
-            <View key={i} style={styles.trustLogo}>
-              <Text style={styles.trustLogoText}>{b}</Text>
-            </View>
-          ))}
-        </View>
-      </View>
-
-      {/* Footer */}
+      {/* ── Footer ── */}
       <View style={styles.footer}>
-        <View style={styles.footerLinks}>
-          <TouchableOpacity onPress={() => router.push('/terms')} accessibilityRole="link"><Text style={styles.footerLink}>Terms of Service</Text></TouchableOpacity>
-          <TouchableOpacity onPress={() => router.push('/privacy')} accessibilityRole="link"><Text style={styles.footerLink}>Privacy Policy</Text></TouchableOpacity>
-          <TouchableOpacity onPress={() => router.push('/terms')} accessibilityRole="link"><Text style={styles.footerLink}>Help Center</Text></TouchableOpacity>
-        </View>
-        <Text style={styles.footerCopyright}>© 2026 PLXYGROUND. All rights reserved.</Text>
+        <TouchableOpacity onPress={() => router.push('/terms')} accessibilityRole="link">
+          <Text style={styles.footerLink}>Terms</Text>
+        </TouchableOpacity>
+        <Text style={styles.footerSep}>·</Text>
+        <TouchableOpacity onPress={() => router.push('/privacy')} accessibilityRole="link">
+          <Text style={styles.footerLink}>Privacy</Text>
+        </TouchableOpacity>
       </View>
-    </ScrollView>
+
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0b1020' },
-  scrollContent: { minHeight: '100%' },
-  nav: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 16, position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 },
-  logo: { fontSize: 22, fontWeight: '800', color: '#fff', letterSpacing: 2 },
-  navLinks: { flexDirection: 'row', gap: 20, alignItems: 'center' },
-  navLink: { color: '#ccc', fontSize: 14, fontWeight: '500' },
-  navLinkLogin: { color: '#fff', fontSize: 14, fontWeight: '600', backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
-  hero: { height: 600, justifyContent: 'center', alignItems: 'center', position: 'relative' },
-  heroBg: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%' },
-  heroOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(9,12,24,0.7)' },
-  heroContent: { zIndex: 1, alignItems: 'center', paddingHorizontal: 24, maxWidth: 700 },
-  heroTitle: { fontSize: 36, fontWeight: '800', color: '#fff', textAlign: 'center', marginBottom: 16, lineHeight: 44 },
-  heroSubtitle: { fontSize: 16, color: '#cbd5e1', textAlign: 'center', marginBottom: 32, lineHeight: 24 },
-  heroCTAs: { flexDirection: 'row', gap: 16, flexWrap: 'wrap', justifyContent: 'center' },
-  primaryBtn: { backgroundColor: '#2563eb', paddingHorizontal: 32, paddingVertical: 14, borderRadius: 10 },
-  primaryBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  secondaryBtn: { backgroundColor: 'transparent', borderWidth: 2, borderColor: '#fff', paddingHorizontal: 32, paddingVertical: 14, borderRadius: 10 },
-  secondaryBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  features: { paddingVertical: 60, paddingHorizontal: 24, backgroundColor: '#f8fafc' },
-  sectionTitle: { fontSize: 28, fontWeight: '700', textAlign: 'center', marginBottom: 32, color: '#111' },
-  featureGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 20 },
-  featureCard: { backgroundColor: '#fff', borderRadius: 12, padding: 24, width: 260, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 12, elevation: 3, alignItems: 'center' },
-  featureIcon: { fontSize: 36, marginBottom: 12 },
-  featureTitle: { fontSize: 18, fontWeight: '700', color: '#111', marginBottom: 8 },
-  featureDesc: { fontSize: 14, color: '#6b7280', textAlign: 'center', lineHeight: 20 },
-  trustBar: { paddingVertical: 40, paddingHorizontal: 24, backgroundColor: '#fff', alignItems: 'center' },
-  trustTitle: { fontSize: 14, color: '#9ca3af', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 20 },
-  trustLogos: { flexDirection: 'row', gap: 32, flexWrap: 'wrap', justifyContent: 'center' },
-  trustLogo: { backgroundColor: '#f3f4f6', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },
-  trustLogoText: { fontSize: 14, fontWeight: '700', color: '#374151' },
-  footer: { backgroundColor: '#0b1020', paddingVertical: 32, paddingHorizontal: 24, alignItems: 'center' },
-  footerLinks: { flexDirection: 'row', gap: 24, marginBottom: 16, flexWrap: 'wrap', justifyContent: 'center' },
-  footerLink: { color: '#94a3b8', fontSize: 14 },
-  footerCopyright: { color: '#64748b', fontSize: 12 },
+  container: {
+    flex: 1,
+    backgroundColor: '#07070E',
+  },
+
+  // Background blobs
+  blob: {
+    position: 'absolute',
+    borderRadius: 999,
+  },
+  blobTL: {
+    width: 320,
+    height: 320,
+    top: -100,
+    left: -100,
+  },
+  blobBR: {
+    width: 280,
+    height: 280,
+    bottom: 80,
+    right: -80,
+  },
+
+  // Logo bar
+  topBar: {
+    paddingTop: 60,
+    paddingBottom: 12,
+    alignItems: 'center',
+  },
+  logoText: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#F0F0FA',
+    letterSpacing: 4,
+  },
+  logoAccent: {
+    fontWeight: '900',
+  },
+
+  // Slides
+  slide: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+
+  // Visual area with rings
+  visualArea: {
+    width: 220,
+    height: 220,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 48,
+  },
+  ring: {
+    position: 'absolute',
+    borderWidth: 1,
+    borderRadius: 999,
+  },
+  ringOuter: {
+    width: 220,
+    height: 220,
+  },
+  ringMid: {
+    width: 170,
+    height: 170,
+  },
+  iconCircle: {
+    width: 110,
+    height: 110,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 24,
+    elevation: 12,
+  },
+  iconSymbol: {
+    fontSize: 52,
+  },
+  // Corner accent marks (L-shaped lines via bordered View)
+  cornerMark: {
+    position: 'absolute',
+    width: 20,
+    height: 20,
+    borderWidth: 2,
+  },
+  cornerTL: {
+    top: 8,
+    left: 8,
+    borderRightWidth: 0,
+    borderBottomWidth: 0,
+    borderTopLeftRadius: 4,
+  },
+  cornerBR: {
+    bottom: 8,
+    right: 8,
+    borderLeftWidth: 0,
+    borderTopWidth: 0,
+    borderBottomRightRadius: 4,
+  },
+
+  // Text
+  textArea: {
+    alignItems: 'center',
+    paddingHorizontal: 8,
+  },
+  eyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 3,
+    marginBottom: 12,
+  },
+  slideTitle: {
+    fontSize: 36,
+    fontWeight: '900',
+    color: '#F0F0FA',
+    textAlign: 'center',
+    letterSpacing: -0.5,
+    lineHeight: 42,
+    marginBottom: 16,
+  },
+  slideSubtitle: {
+    fontSize: 15,
+    color: '#8A94B8',
+    textAlign: 'center',
+    lineHeight: 24,
+    maxWidth: 300,
+  },
+
+  // Dots
+  dots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 24,
+  },
+  dot: {
+    height: 6,
+    borderRadius: 3,
+  },
+  dotActive: {
+    height: 6,
+    borderRadius: 3,
+  },
+  dotInactive: {
+    width: 6,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+  },
+
+  // CTAs
+  ctas: {
+    paddingHorizontal: 28,
+    paddingBottom: 8,
+    gap: 4,
+    maxWidth: 440,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  primaryBtn: {
+    paddingVertical: 17,
+    borderRadius: 12,
+    alignItems: 'center',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  primaryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+  secondaryBtn: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  secondaryBtnText: {
+    fontSize: 14,
+    color: '#4A5278',
+    fontWeight: '500',
+  },
+  secondaryBtnLink: {
+    fontWeight: '700',
+  },
+
+  // Footer
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingBottom: 32,
+    paddingTop: 4,
+    gap: 10,
+  },
+  footerLink: {
+    fontSize: 12,
+    color: '#4A5278',
+    fontWeight: '500',
+  },
+  footerSep: {
+    fontSize: 12,
+    color: '#4A5278',
+  },
 });

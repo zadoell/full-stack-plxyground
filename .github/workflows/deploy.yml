@@ -1,0 +1,70 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy.yml"
+
+jobs:
+  deploy:
+    name: Deploy backend to EC2
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync backend files to EC2
+        run: |
+          rsync -az --delete \
+            --exclude='.env' \
+            --exclude='node_modules' \
+            --exclude='*.db' \
+            --exclude='*.db-shm' \
+            --exclude='*.db-wal' \
+            backend/ \
+            ec2-user@${{ secrets.EC2_HOST }}:/opt/plxyground/
+
+      - name: Install dependencies and restart
+        run: |
+          ssh ec2-user@${{ secrets.EC2_HOST }} << 'REMOTE'
+            set -e
+            cd /opt/plxyground
+
+            # Install production dependencies
+            npm install --production --omit=dev
+
+            # Run database migrations
+            npm run migrate
+
+            # Restart app with PM2 (starts fresh if not already running)
+            if pm2 list | grep -q plxyground; then
+              pm2 restart plxyground --update-env
+            else
+              pm2 start src/index.js --name plxyground --cwd /opt/plxyground
+            fi
+
+            pm2 save
+
+            # Verify health
+            sleep 3
+            curl -sf http://localhost:3011/healthz | grep '"status":"ok"'
+            echo "Deploy successful."
+          REMOTE
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Deployment failed. Check the logs above."
+          exit 1

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { setToken, clearToken as clearApiToken } from '../utils/api';
+import { setToken, clearToken as clearApiToken, setAuthExpiredCallback } from '../utils/api';
 
 const AuthContext = createContext(null);
 
@@ -42,6 +42,12 @@ export function AuthProvider({ children }) {
     await AsyncStorage.removeItem('plxy_token');
     await AsyncStorage.removeItem('plxy_user');
   }, []);
+
+  // Register a callback so api.js can trigger logout when a token expires
+  useEffect(() => {
+    setAuthExpiredCallback(logout);
+    return () => setAuthExpiredCallback(null);
+  }, [logout]);
 
   const updateUser = useCallback(async (updatedUser) => {
     setUser(updatedUser);

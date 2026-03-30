@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3011:3011"
+    env_file:
+      - ./backend/.env
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3011/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  admin-panel:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./admin-panel:/app:ro
+    ports:
+      - "3012:3012"
+    command: npx serve -s . -l 3012 --no-clipboard
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

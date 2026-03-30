@@ -1,0 +1,431 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: PLXYGROUND production stack - VPC, EC2, RDS PostgreSQL 16, S3, IAM
+
+# ─────────────────────────────────────────────
+# PARAMETERS
+# ─────────────────────────────────────────────
+Parameters:
+  AppName:
+    Type: String
+    Default: plxyground
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [production, staging]
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 Key Pair for SSH access
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues: [t3.micro, t3.small, t3.medium]
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    AllowedValues: [db.t3.micro, db.t3.small, db.t3.medium]
+  DBName:
+    Type: String
+    Default: plxyground
+  DBUsername:
+    Type: String
+    Default: plxyground
+    NoEcho: false
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 16
+    MaxLength: 41
+    AllowedPattern: "[a-zA-Z0-9!#$%^&*]+"
+    ConstraintDescription: Must be 16-41 alphanumeric or !#$%^&* characters
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+  CorsOrigin:
+    Type: String
+    Default: "https://app.plxyground.com"
+  SeedAdminPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 12
+    Default: ""
+  AwsAccessKeyId:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Leave empty to use EC2 IAM role (recommended)
+  AwsSecretAccessKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Leave empty to use EC2 IAM role (recommended)
+  ResendApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+  ResendFromEmail:
+    Type: String
+    Default: "noreply@plxyground.com"
+
+# ─────────────────────────────────────────────
+# MAPPINGS
+# ─────────────────────────────────────────────
+Mappings:
+  RegionAMI:
+    # Amazon Linux 2023 (x86_64) – update per-region as needed
+    eu-west-1:
+      AMI: ami-0aa7d40eeae50c9a9
+    us-east-1:
+      AMI: ami-0c02fb55956c7d316
+    us-west-2:
+      AMI: ami-0ceecbb0f30a902a6
+    ap-southeast-1:
+      AMI: ami-0b825ad86ddcfb907
+
+# ─────────────────────────────────────────────
+# RESOURCES
+# ─────────────────────────────────────────────
+Resources:
+
+  # ── VPC ──────────────────────────────────────
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-vpc"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-igw"
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # ── Public Subnets (EC2) ──────────────────────
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-public-1"
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-public-2"
+
+  # ── Private Subnets (RDS) ─────────────────────
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-private-1"
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.4.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-private-2"
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  # ── Security Groups ───────────────────────────
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EC2 backend security group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3011
+          ToPort: 3011
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-ec2-sg"
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: RDS PostgreSQL security group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-rds-sg"
+
+  # ── IAM Role for EC2 (S3 access) ─────────────
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AppName}-ec2-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: S3MediaAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${MediaBucket}"
+                  - !Sub "arn:aws:s3:::${MediaBucket}/*"
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2Role
+
+  # ── S3 Media Bucket ───────────────────────────
+  MediaBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AppName}-media-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: [GET]
+            AllowedOrigins: ["*"]
+            MaxAge: 3600
+
+  MediaBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MediaBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${MediaBucket}/*"
+
+  # ── RDS Subnet Group ──────────────────────────
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub "${AppName} RDS subnet group"
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  # ── RDS PostgreSQL 16 ─────────────────────────
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub "${AppName}-db"
+      DBInstanceClass: !Ref DBInstanceClass
+      Engine: postgres
+      EngineVersion: "16"
+      DBName: !Ref DBName
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      AllocatedStorage: "20"
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: false
+      PubliclyAccessible: false
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      BackupRetentionPeriod: 7
+      DeletionProtection: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-db"
+
+  # ── EC2 Backend Server ────────────────────────
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: Database
+    Properties:
+      ImageId: !FindInMap [RegionAMI, !Ref "AWS::Region", AMI]
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-backend"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          # Update and install dependencies
+          dnf update -y
+          dnf install -y nodejs npm git nginx
+
+          # Install PM2 globally
+          npm install -g pm2
+
+          # Create app directory
+          mkdir -p /opt/plxyground
+          chown ec2-user:ec2-user /opt/plxyground
+
+          # Write environment file
+          cat > /opt/plxyground/.env << 'ENVEOF'
+          NODE_ENV=production
+          PORT=3011
+          DATABASE_URL=postgresql://${DBUsername}:${DBPassword}@${Database.Endpoint.Address}:5432/${DBName}
+          DATABASE_SSL_VERIFY=true
+          JWT_SECRET=${JwtSecret}
+          JWT_EXPIRES_IN=7d
+          CORS_ORIGIN=${CorsOrigin}
+          AWS_REGION=${AWS::Region}
+          AWS_S3_BUCKET=${MediaBucket}
+          LOCAL_STUB_EMAIL=false
+          RESEND_API_KEY=${ResendApiKey}
+          RESEND_FROM_EMAIL=${ResendFromEmail}
+          ENVEOF
+
+          # Configure nginx reverse proxy
+          cat > /etc/nginx/conf.d/plxyground.conf << 'NGINXEOF'
+          server {
+              listen 80;
+              server_name _;
+              client_max_body_size 15M;
+
+              location / {
+                  proxy_pass http://127.0.0.1:3011;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_cache_bypass $http_upgrade;
+              }
+          }
+          NGINXEOF
+
+          systemctl enable nginx
+          systemctl start nginx
+
+          # PM2 startup
+          pm2 startup systemd -u ec2-user --hp /home/ec2-user
+          systemctl enable pm2-ec2-user
+
+  # ── Elastic IP ────────────────────────────────
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref EC2Instance
+
+# ─────────────────────────────────────────────
+# OUTPUTS
+# ─────────────────────────────────────────────
+Outputs:
+  EC2PublicIP:
+    Description: EC2 instance public IP (point your DNS A record here)
+    Value: !Ref ElasticIP
+    Export:
+      Name: !Sub "${AppName}-ec2-ip"
+
+  EC2PublicDNS:
+    Description: EC2 public DNS hostname
+    Value: !GetAtt EC2Instance.PublicDnsName
+
+  RDSEndpoint:
+    Description: RDS PostgreSQL endpoint
+    Value: !GetAtt Database.Endpoint.Address
+    Export:
+      Name: !Sub "${AppName}-rds-endpoint"
+
+  MediaBucketName:
+    Description: S3 media bucket name
+    Value: !Ref MediaBucket
+    Export:
+      Name: !Sub "${AppName}-media-bucket"
+
+  DatabaseURL:
+    Description: DATABASE_URL for backend .env (contains password - treat as secret)
+    Value: !Sub "postgresql://${DBUsername}:${DBPassword}@${Database.Endpoint.Address}:5432/${DBName}"
