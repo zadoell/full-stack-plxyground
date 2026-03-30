@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, Animated, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, Text, StyleSheet, Animated, TouchableOpacity, ActivityIndicator } from 'react-native';
 
 // ── Toast / Banner Component ──
 export function NoticeBanner({ message, type = 'info', visible, onDismiss, duration = 4000 }) {
@@ -21,7 +21,7 @@ export function NoticeBanner({ message, type = 'info', visible, onDismiss, durat
 
   if (!visible) return null;
 
-  const bgColor = type === 'success' ? '#059669' : type === 'error' ? '#dc2626' : type === 'warning' ? '#d97706' : '#2563eb';
+  const bgColor = type === 'success' ? '#00E676' : type === 'error' ? '#FF1744' : type === 'warning' ? '#FF9100' : '#FF3D00';
 
   return (
     <Animated.View style={[styles.banner, { backgroundColor: bgColor, opacity: fadeAnim }]} accessibilityRole="alert">
@@ -34,7 +34,7 @@ export function NoticeBanner({ message, type = 'info', visible, onDismiss, durat
 }
 
 // ── Inline Modal ──
-export function InlineModal({ visible, title, message, onConfirm, onCancel, confirmText = 'Confirm', cancelText = 'Cancel', confirmColor = '#dc2626' }) {
+export function InlineModal({ visible, title, message, onConfirm, onCancel, confirmText = 'Confirm', cancelText = 'Cancel', confirmColor = '#ff3366' }) {
   if (!visible) return null;
 
   return (
@@ -56,10 +56,60 @@ export function InlineModal({ visible, title, message, onConfirm, onCancel, conf
 }
 
 // ── Loading Spinner ──
-export function LoadingSpinner({ message = 'Loading...' }) {
+export function LoadingSpinner({ message = 'Loading...', size = 'large', color = '#FF3D00' }) {
   return (
     <View style={styles.center} accessibilityRole="progressbar" accessibilityLabel={message}>
-      <Text style={styles.loadingText}>⏳ {message}</Text>
+      <ActivityIndicator size={size} color={color} />
+      <Text style={styles.loadingText}>{message}</Text>
+    </View>
+  );
+}
+
+// ── Skeleton Loader ──
+export function SkeletonLoader({ lines = 3, hasAvatar = false, hasImage = false }) {
+  const shimmerAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmerAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
+        Animated.timing(shimmerAnim, { toValue: 0, duration: 1000, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []);
+
+  const opacity = shimmerAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 0.7] });
+
+  return (
+    <View style={styles.skeletonContainer}>
+      {hasImage && <Animated.View style={[styles.skeletonImage, { opacity }]} />}
+      <View style={styles.skeletonBody}>
+        {hasAvatar && (
+          <View style={styles.skeletonAvatarRow}>
+            <Animated.View style={[styles.skeletonAvatar, { opacity }]} />
+            <Animated.View style={[styles.skeletonLine, { width: '40%', opacity }]} />
+          </View>
+        )}
+        {Array.from({ length: lines }).map((_, i) => (
+          <Animated.View
+            key={i}
+            style={[styles.skeletonLine, { width: i === lines - 1 ? '60%' : '100%', opacity }]}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ── Skeleton Card List (convenience) ──
+export function SkeletonCardList({ count = 3, hasImage = false }) {
+  return (
+    <View>
+      {Array.from({ length: count }).map((_, i) => (
+        <SkeletonLoader key={i} lines={3} hasAvatar hasImage={hasImage} />
+      ))}
     </View>
   );
 }
@@ -91,7 +141,7 @@ export function ErrorState({ message = 'Something went wrong', onRetry }) {
 
 // ── Content Card ──
 export function ContentCard({ item, onPress, onEdit, onDelete, isOwner }) {
-  const typePillColor = item.content_type === 'article' ? '#2563eb' : item.content_type === 'video_embed' ? '#7c3aed' : '#059669';
+  const typePillColor = item.content_type === 'article' ? '#FF3D00' : item.content_type === 'video_embed' ? '#00CFFF' : '#FFD100';
 
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} accessibilityRole="button" accessibilityLabel={`View ${item.title}`}>
@@ -111,9 +161,9 @@ export function ContentCard({ item, onPress, onEdit, onDelete, isOwner }) {
             <Text style={styles.typePillText}>{item.content_type?.replace('_', ' ')}</Text>
           </View>
           {item.is_published ? (
-            <View style={[styles.typePill, { backgroundColor: '#059669' }]}><Text style={styles.typePillText}>Published</Text></View>
+            <View style={[styles.typePill, { backgroundColor: '#00E676' }]}><Text style={styles.typePillText}>Published</Text></View>
           ) : (
-            <View style={[styles.typePill, { backgroundColor: '#d97706' }]}><Text style={styles.typePillText}>Pending</Text></View>
+            <View style={[styles.typePill, { backgroundColor: '#FF9100' }]}><Text style={styles.typePillText}>Pending</Text></View>
           )}
         </View>
         <Text style={styles.cardTitle}>{item.title}</Text>
@@ -151,37 +201,43 @@ export function useToast() {
 }
 
 const styles = StyleSheet.create({
-  banner: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1000, flexDirection: 'row', alignItems: 'center', padding: 14, paddingHorizontal: 20 },
+  banner: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1000, flexDirection: 'row', alignItems: 'center', padding: 16, paddingHorizontal: 20, borderRadius: 14, marginHorizontal: 12, marginTop: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   bannerText: { color: '#fff', flex: 1, fontSize: 14, fontWeight: '600' },
-  bannerClose: { color: '#fff', fontSize: 18, marginLeft: 12, padding: 4 },
-  modalOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 2000 },
-  modalContent: { backgroundColor: '#fff', borderRadius: 12, padding: 24, width: '90%', maxWidth: 400, elevation: 8 },
-  modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 8, color: '#111' },
-  modalMessage: { fontSize: 14, color: '#555', marginBottom: 20, lineHeight: 20 },
-  modalButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
-  modalBtn: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 },
-  modalBtnCancel: { backgroundColor: '#e5e7eb' },
-  modalBtnCancelText: { color: '#374151', fontWeight: '600' },
-  modalBtnText: { color: '#fff', fontWeight: '600' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
-  loadingText: { fontSize: 16, color: '#666', marginTop: 8 },
-  emptyText: { fontSize: 16, color: '#999', marginTop: 12, textAlign: 'center' },
-  errorText: { fontSize: 16, color: '#dc2626', marginTop: 12, textAlign: 'center' },
-  retryBtn: { marginTop: 16, backgroundColor: '#2563eb', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8 },
-  retryBtnText: { color: '#fff', fontWeight: '600' },
-  card: { backgroundColor: '#fff', borderRadius: 10, marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 8, elevation: 3, overflow: 'hidden' },
-  cardMedia: { width: '100%', height: 200, backgroundColor: '#e5e7eb' },
-  cardBody: { padding: 16 },
-  cardHeader: { flexDirection: 'row', gap: 8, marginBottom: 8, flexWrap: 'wrap' },
-  typePill: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12 },
-  typePillText: { color: '#fff', fontSize: 11, fontWeight: '600', textTransform: 'capitalize' },
-  cardTitle: { fontSize: 18, fontWeight: '700', color: '#111', marginBottom: 4 },
-  cardCreator: { fontSize: 13, color: '#6b7280', marginBottom: 8 },
-  cardBodyText: { fontSize: 15, color: '#374151', lineHeight: 22 },
-  cardDate: { fontSize: 12, color: '#9ca3af', marginTop: 8 },
-  cardActions: { flexDirection: 'row', gap: 12, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#f3f4f6' },
-  editBtn: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#eff6ff', borderRadius: 6 },
-  editBtnText: { fontSize: 13, color: '#2563eb' },
-  deleteBtn: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#fef2f2', borderRadius: 6 },
-  deleteBtnText: { fontSize: 13, color: '#dc2626' },
+  bannerClose: { color: '#fff', fontSize: 18, marginLeft: 12, padding: 4, opacity: 0.85 },
+  modalOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', zIndex: 2000 },
+  modalContent: { backgroundColor: '#0F0F1D', borderRadius: 14, padding: 28, width: '90%', maxWidth: 400, shadowColor: '#FF3D00', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.15, shadowRadius: 32, elevation: 12, borderWidth: 1, borderColor: 'rgba(255,61,0,0.15)' },
+  modalTitle: { fontSize: 20, fontWeight: '800', marginBottom: 8, color: '#F0F0FA', letterSpacing: -0.3 },
+  modalMessage: { fontSize: 15, color: '#8A94B8', marginBottom: 24, lineHeight: 22 },
+  modalButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
+  modalBtn: { paddingHorizontal: 22, paddingVertical: 11, borderRadius: 10 },
+  modalBtnCancel: { backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+  modalBtnCancelText: { color: '#8A94B8', fontWeight: '600' },
+  modalBtnText: { color: '#fff', fontWeight: '700' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 48 },
+  loadingText: { fontSize: 15, color: '#8A94B8', marginTop: 14, fontWeight: '500' },
+  skeletonContainer: { backgroundColor: '#0F0F1D', borderRadius: 14, marginBottom: 16, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' },
+  skeletonImage: { width: '100%', height: 180, backgroundColor: 'rgba(255,61,0,0.05)' },
+  skeletonBody: { padding: 18 },
+  skeletonAvatarRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
+  skeletonAvatar: { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(255,61,0,0.1)' },
+  skeletonLine: { height: 12, backgroundColor: 'rgba(255,61,0,0.05)', borderRadius: 8, marginBottom: 12 },
+  emptyText: { fontSize: 16, color: '#4A5278', marginTop: 14, textAlign: 'center', fontWeight: '500' },
+  errorText: { fontSize: 16, color: '#FF1744', marginTop: 14, textAlign: 'center', fontWeight: '500' },
+  retryBtn: { marginTop: 20, backgroundColor: '#FF3D00', paddingHorizontal: 28, paddingVertical: 12, borderRadius: 10, shadowColor: '#FF3D00', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 12 },
+  retryBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
+  card: { backgroundColor: '#0F0F1D', borderRadius: 14, marginBottom: 18, shadowColor: '#FF3D00', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 4, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)', borderLeftWidth: 3, borderLeftColor: '#FF3D00' },
+  cardMedia: { width: '100%', height: 200, backgroundColor: 'rgba(255,61,0,0.04)' },
+  cardBody: { padding: 18 },
+  cardHeader: { flexDirection: 'row', gap: 8, marginBottom: 10, flexWrap: 'wrap' },
+  typePill: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 6 },
+  typePillText: { color: '#fff', fontSize: 11, fontWeight: '700', textTransform: 'capitalize', letterSpacing: 0.3 },
+  cardTitle: { fontSize: 18, fontWeight: '800', color: '#F0F0FA', marginBottom: 4, letterSpacing: -0.2 },
+  cardCreator: { fontSize: 13, color: '#8A94B8', marginBottom: 8, fontWeight: '500' },
+  cardBodyText: { fontSize: 15, color: '#8A94B8', lineHeight: 23 },
+  cardDate: { fontSize: 12, color: '#4A5278', marginTop: 10, fontWeight: '500' },
+  cardActions: { flexDirection: 'row', gap: 10, marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)' },
+  editBtn: { paddingHorizontal: 14, paddingVertical: 8, backgroundColor: 'rgba(255,61,0,0.08)', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,61,0,0.2)' },
+  editBtnText: { fontSize: 13, color: '#FF3D00', fontWeight: '600' },
+  deleteBtn: { paddingHorizontal: 14, paddingVertical: 8, backgroundColor: 'rgba(255,23,68,0.08)', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,23,68,0.2)' },
+  deleteBtnText: { fontSize: 13, color: '#FF1744', fontWeight: '600' },
 });

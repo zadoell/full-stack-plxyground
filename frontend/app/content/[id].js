@@ -3,9 +3,11 @@ import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Image } from 'rea
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import api from '../../src/utils/api';
 import { LoadingSpinner, ErrorState } from '../../src/components/UIComponents';
+import { useBack } from '../../src/hooks/useBack';
 
 export default function ContentDetailScreen() {
   const router = useRouter();
+  const goBack = useBack('/feed');
   const { id } = useLocalSearchParams();
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -28,11 +30,11 @@ export default function ContentDetailScreen() {
   if (error) return <ErrorState message={error} onRetry={() => { setLoading(true); setError(null); }} />;
   if (!item) return <ErrorState message="Content not found" />;
 
-  const typePillColor = item.content_type === 'article' ? '#2563eb' : item.content_type === 'video_embed' ? '#7c3aed' : '#059669';
+  const typePillColor = item.content_type === 'article' ? '#FF3D00' : item.content_type === 'video_embed' ? '#00CFFF' : '#FFD100';
 
   return (
     <ScrollView style={styles.container}>
-      <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityRole="button" accessibilityLabel="Go back">
+      <TouchableOpacity onPress={() => goBack()} style={styles.backBtn} accessibilityRole="button" accessibilityLabel="Go back">
         <Text style={styles.backBtnText}>← Back</Text>
       </TouchableOpacity>
 
@@ -53,9 +55,9 @@ export default function ContentDetailScreen() {
             <Text style={styles.pillText}>{item.content_type?.replace('_', ' ')}</Text>
           </View>
           {item.is_published ? (
-            <View style={[styles.pill, { backgroundColor: '#059669' }]}><Text style={styles.pillText}>Published</Text></View>
+            <View style={[styles.pill, { backgroundColor: '#00E676' }]}><Text style={styles.pillText}>Published</Text></View>
           ) : (
-            <View style={[styles.pill, { backgroundColor: '#d97706' }]}><Text style={styles.pillText}>Pending</Text></View>
+            <View style={[styles.pill, { backgroundColor: '#FF9100' }]}><Text style={styles.pillText}>Pending</Text></View>
           )}
         </View>
 
@@ -84,20 +86,20 @@ export default function ContentDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  backBtn: { padding: 16 },
-  backBtnText: { color: '#2563eb', fontSize: 14, fontWeight: '600' },
-  heroMedia: { width: '100%', height: 300, backgroundColor: '#e5e7eb' },
-  content: { padding: 20, maxWidth: 700, alignSelf: 'center', width: '100%' },
-  meta: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  pill: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12 },
-  pillText: { color: '#fff', fontSize: 12, fontWeight: '600', textTransform: 'capitalize' },
-  title: { fontSize: 28, fontWeight: '800', color: '#111', marginBottom: 16, lineHeight: 36 },
-  creatorChip: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#f3f4f6', marginBottom: 12 },
-  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#2563eb', justifyContent: 'center', alignItems: 'center' },
-  avatarText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  creatorName: { fontSize: 15, fontWeight: '600', color: '#111' },
-  creatorRole: { fontSize: 12, color: '#6b7280', textTransform: 'capitalize' },
-  timestamp: { fontSize: 13, color: '#9ca3af', marginBottom: 20 },
-  body: { fontSize: 16, color: '#374151', lineHeight: 26 },
+  container: { flex: 1, backgroundColor: '#07070E' },
+  backBtn: { padding: 18 },
+  backBtnText: { color: '#FF3D00', fontSize: 14, fontWeight: '600' },
+  heroMedia: { width: '100%', height: 320, backgroundColor: '#0F0F1D' },
+  content: { padding: 24, maxWidth: 700, alignSelf: 'center', width: '100%' },
+  meta: { flexDirection: 'row', gap: 8, marginBottom: 14 },
+  pill: { paddingHorizontal: 14, paddingVertical: 5, borderRadius: 6 },
+  pillText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600', textTransform: 'capitalize' },
+  title: { fontSize: 28, fontWeight: '800', color: '#F0F0FA', marginBottom: 18, lineHeight: 36, letterSpacing: -0.3 },
+  creatorChip: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, borderTopWidth: 1, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.07)', marginBottom: 14 },
+  avatar: { width: 44, height: 44, borderRadius: 12, backgroundColor: '#FF3D00', justifyContent: 'center', alignItems: 'center' },
+  avatarText: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
+  creatorName: { fontSize: 15, fontWeight: '700', color: '#F0F0FA' },
+  creatorRole: { fontSize: 12, color: '#8A94B8', textTransform: 'capitalize' },
+  timestamp: { fontSize: 13, color: '#4A5278', marginBottom: 22 },
+  body: { fontSize: 15, color: '#8A94B8', lineHeight: 28 },
 });

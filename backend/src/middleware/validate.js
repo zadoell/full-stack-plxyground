@@ -1,6 +1,6 @@
 // Validation middleware helpers
 
-const ALLOWED_CONTENT_TYPES = ['article', 'video_embed', 'image_story'];
+const ALLOWED_CONTENT_TYPES = ['article', 'video_embed', 'image_story', 'campaign_brief'];
 
 /**
  * Validate URL format (basic check)

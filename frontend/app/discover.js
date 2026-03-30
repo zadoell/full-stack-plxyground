@@ -3,9 +3,11 @@ import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet } from 
 import { useRouter } from 'expo-router';
 import api from '../src/utils/api';
 import { LoadingSpinner, EmptyState, ErrorState } from '../src/components/UIComponents';
+import { useBack } from '../src/hooks/useBack';
 
 export default function DiscoverScreen() {
   const router = useRouter();
+  const goBack = useBack('/feed');
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('creators');
   const [creators, setCreators] = useState([]);
@@ -39,7 +41,7 @@ export default function DiscoverScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}><Text style={styles.backBtnText}>← Back</Text></TouchableOpacity>
+        <TouchableOpacity onPress={() => goBack()} style={styles.backBtn}><Text style={styles.backBtnText}>← Back</Text></TouchableOpacity>
         <Text style={styles.title}>Discover</Text>
       </View>
 
@@ -62,7 +64,7 @@ export default function DiscoverScreen() {
                   <View style={styles.avatar}><Text style={styles.avatarText}>{(c.name || 'U')[0]}</Text></View>
                   <View style={styles.creatorInfo}>
                     <Text style={styles.creatorName}>{c.name}</Text>
-                    <Text style={styles.creatorMeta}>{c.role === 'business' ? '🏢 Business' : '🎨 Creator'}{c.location ? ` • ${c.location}` : ''}</Text>
+                    <Text style={styles.creatorMeta}>{c.role === 'business' ? '🏢 Business' : c.role === 'athlete' ? '🏆 Athlete' : '🎨 Creator'}{c.location ? ` • ${c.location}` : ''}</Text>
                     {c.bio ? <Text style={styles.creatorBio} numberOfLines={2}>{c.bio}</Text> : null}
                   </View>
                 </TouchableOpacity>
@@ -85,29 +87,29 @@ export default function DiscoverScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8fafc' },
-  header: { flexDirection: 'row', alignItems: 'center', padding: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e5e7eb', gap: 12 },
+  container: { flex: 1, backgroundColor: '#07070E' },
+  header: { flexDirection: 'row', alignItems: 'center', padding: 18, backgroundColor: '#0A0A18', borderBottomWidth: 1, borderBottomColor: 'rgba(255,61,0,0.12)', gap: 12 },
   backBtn: {},
-  backBtnText: { color: '#2563eb', fontSize: 14, fontWeight: '600' },
-  title: { fontSize: 20, fontWeight: '800', color: '#111' },
-  searchRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff' },
-  searchInput: { flex: 1, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14 },
+  backBtnText: { color: '#FF3D00', fontSize: 14, fontWeight: '600' },
+  title: { fontSize: 20, fontWeight: '800', color: '#F0F0FA', letterSpacing: -0.3 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#0A0A18' },
+  searchInput: { flex: 1, borderWidth: 1.5, borderColor: 'rgba(255,61,0,0.2)', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12, fontSize: 14, color: '#F0F0FA', backgroundColor: 'rgba(255,61,0,0.04)' },
   clearBtn: { marginLeft: 8, padding: 8 },
-  tabs: { flexDirection: 'row', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
-  tab: { flex: 1, paddingVertical: 12, alignItems: 'center' },
-  tabActive: { borderBottomWidth: 2, borderBottomColor: '#2563eb' },
-  tabText: { fontSize: 14, color: '#6b7280', fontWeight: '600' },
-  tabTextActive: { color: '#2563eb' },
+  tabs: { flexDirection: 'row', backgroundColor: '#0A0A18', borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)' },
+  tab: { flex: 1, paddingVertical: 14, alignItems: 'center' },
+  tabActive: { borderBottomWidth: 2.5, borderBottomColor: '#FF3D00' },
+  tabText: { fontSize: 14, color: '#4A5278', fontWeight: '600' },
+  tabTextActive: { color: '#FF3D00' },
   list: { flex: 1 },
   listContent: { padding: 16, maxWidth: 600, alignSelf: 'center', width: '100%' },
-  creatorCard: { flexDirection: 'row', padding: 16, backgroundColor: '#fff', borderRadius: 10, marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2, gap: 12 },
-  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#2563eb', justifyContent: 'center', alignItems: 'center' },
-  avatarText: { color: '#fff', fontWeight: '700', fontSize: 18 },
+  creatorCard: { flexDirection: 'row', padding: 18, backgroundColor: '#0F0F1D', borderRadius: 14, marginBottom: 12, shadowColor: '#FF3D00', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 2, gap: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' },
+  avatar: { width: 50, height: 50, borderRadius: 12, backgroundColor: '#FF3D00', justifyContent: 'center', alignItems: 'center', shadowColor: '#FF3D00', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 8 },
+  avatarText: { color: '#FFFFFF', fontWeight: '800', fontSize: 18 },
   creatorInfo: { flex: 1 },
-  creatorName: { fontSize: 16, fontWeight: '700', color: '#111' },
-  creatorMeta: { fontSize: 12, color: '#6b7280', marginTop: 2 },
-  creatorBio: { fontSize: 13, color: '#374151', marginTop: 6 },
-  contentItem: { padding: 16, backgroundColor: '#fff', borderRadius: 10, marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
-  contentTitle: { fontSize: 15, fontWeight: '700', color: '#111' },
-  contentMeta: { fontSize: 12, color: '#6b7280', marginTop: 4 },
+  creatorName: { fontSize: 16, fontWeight: '700', color: '#F0F0FA' },
+  creatorMeta: { fontSize: 12, color: '#8A94B8', marginTop: 3 },
+  creatorBio: { fontSize: 13, color: '#8A94B8', marginTop: 6, lineHeight: 19 },
+  contentItem: { padding: 18, backgroundColor: '#0F0F1D', borderRadius: 14, marginBottom: 12, shadowColor: '#FF3D00', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 2, borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' },
+  contentTitle: { fontSize: 15, fontWeight: '700', color: '#F0F0FA' },
+  contentMeta: { fontSize: 12, color: '#8A94B8', marginTop: 4 },
 });

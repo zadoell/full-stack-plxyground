@@ -2,7 +2,7 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const db = require('../db');
+const supabase = require('../db');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { validatePagination } = require('../middleware/validate');
 const { incrementCounter } = require('../middleware/logger');
@@ -10,35 +10,20 @@ const { incrementCounter } = require('../middleware/logger');
 const router = express.Router();
 const SALT_ROUNDS = 10;
 
-// ── Admin Login (no auth middleware – this IS the auth endpoint) ──
+// ── Admin Login ──
 router.post('/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
-    }
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
 
-    const admin = db.prepare('SELECT * FROM admins WHERE email = ? AND is_active = 1').get(email.toLowerCase().trim());
-    if (!admin) {
-      incrementCounter('auth.failure');
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
+    const { data: admin } = await supabase.from('admins').select('*').eq('email', email.toLowerCase().trim()).eq('is_active', true).maybeSingle();
+    if (!admin) { incrementCounter('auth.failure'); return res.status(401).json({ error: 'Invalid credentials' }); }
 
     const valid = await bcrypt.compare(password, admin.password_hash);
-    if (!valid) {
-      incrementCounter('auth.failure');
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
+    if (!valid) { incrementCounter('auth.failure'); return res.status(401).json({ error: 'Invalid credentials' }); }
 
-    const token = jwt.sign(
-      { id: admin.id, email: admin.email, role: 'ADMIN' },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-    );
-
-    db.prepare('INSERT INTO audit_log (action_type, actor, target) VALUES (?, ?, ?)')
-      .run('admin.login', admin.email, 'system');
-
+    const token = jwt.sign({ id: admin.id, email: admin.email, role: 'ADMIN' }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
+    await supabase.from('audit_log').insert({ action_type: 'admin.login', actor: admin.email, target: 'system' });
     incrementCounter('auth.success');
     res.json({ message: 'Admin login successful', token, user: { id: admin.id, email: admin.email, role: 'ADMIN' } });
   } catch (err) {
@@ -47,112 +32,76 @@ router.post('/auth/login', async (req, res) => {
   }
 });
 
-// ── All routes below require ADMIN ──
 router.use(authenticate, requireRole('ADMIN'));
 
 // ── Queue ──
-router.get('/queue', validatePagination(2000), (req, res) => {
+router.get('/queue', validatePagination(2000), async (req, res) => {
   try {
     const { limit, offset } = req.pagination;
-    const status = req.query.status || '';
-
-    let where = '1=1';
-    const params = [];
-    if (status) { where += ' AND status = ?'; params.push(status); }
-
-    const total = db.prepare(`SELECT COUNT(*) as c FROM moderation_queue WHERE ${where}`).get(...params).c;
-    const rows = db.prepare(`
-      SELECT * FROM moderation_queue WHERE ${where}
-      ORDER BY created_at DESC LIMIT ? OFFSET ?
-    `).all(...params, limit, offset);
-
-    res.json({ data: rows, total, page: req.pagination.page, limit });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to list queue' });
-  }
+    let query = supabase.from('moderation_queue').select('*', { count: 'exact' });
+    if (req.query.status) query = query.eq('status', req.query.status);
+    const { data: rows, count: total, error } = await query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+    if (error) throw error;
+    res.json({ data: rows || [], total: total || 0, page: req.pagination.page, limit });
+  } catch (err) { res.status(500).json({ error: 'Failed to list queue' }); }
 });
 
-// ── Bulk action on queue ──
-router.post('/queue/bulk-action', (req, res) => {
+router.post('/queue/bulk-action', async (req, res) => {
   try {
     const { ids, action, assigned_admin } = req.body;
-    if (!ids || !Array.isArray(ids) || ids.length === 0) {
-      return res.status(400).json({ error: 'ids array required' });
-    }
-    if (!['approve', 'reject', 'delete', 'assign'].includes(action)) {
-      return res.status(400).json({ error: 'action must be approve|reject|delete|assign' });
-    }
+    if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids array required' });
+    if (!['approve', 'reject', 'delete', 'assign'].includes(action)) return res.status(400).json({ error: 'action must be approve|reject|delete|assign' });
 
-    // Save previous state for undo
-    const prevStates = [];
-    for (const id of ids) {
-      const row = db.prepare('SELECT * FROM moderation_queue WHERE id = ?').get(id);
-      if (row) prevStates.push(row);
-    }
-
-    const placeholders = ids.map(() => '?').join(',');
+    const { data: prevStates } = await supabase.from('moderation_queue').select('*').in('id', ids);
+    const now = new Date().toISOString();
 
     if (action === 'approve') {
-      db.prepare(`UPDATE moderation_queue SET status = 'approved', updated_at = datetime('now') WHERE id IN (${placeholders})`).run(...ids);
-      // Also publish related content
-      for (const ps of prevStates) {
+      await supabase.from('moderation_queue').update({ status: 'approved', updated_at: now }).in('id', ids);
+      for (const ps of (prevStates || [])) {
         if (ps.type === 'content' && ps.entity_id) {
-          db.prepare("UPDATE content SET is_published = 1, published_at = datetime('now'), feed_rank_at = datetime('now'), updated_at = datetime('now') WHERE id = ?").run(ps.entity_id);
+          await supabase.from('content').update({ is_published: true, published_at: now, feed_rank_at: now, updated_at: now }).eq('id', ps.entity_id);
         }
       }
     } else if (action === 'reject') {
-      db.prepare(`UPDATE moderation_queue SET status = 'rejected', updated_at = datetime('now') WHERE id IN (${placeholders})`).run(...ids);
+      await supabase.from('moderation_queue').update({ status: 'rejected', updated_at: now }).in('id', ids);
     } else if (action === 'delete') {
-      db.prepare(`DELETE FROM moderation_queue WHERE id IN (${placeholders})`).run(...ids);
+      await supabase.from('moderation_queue').delete().in('id', ids);
     } else if (action === 'assign') {
-      db.prepare(`UPDATE moderation_queue SET assigned_admin = ?, updated_at = datetime('now') WHERE id IN (${placeholders})`).run(assigned_admin || req.user.email, ...ids);
+      await supabase.from('moderation_queue').update({ assigned_admin: assigned_admin || req.user.email, updated_at: now }).in('id', ids);
     }
 
-    // Log bulk action
-    const bulkLog = db.prepare(`
-      INSERT INTO bulk_action_log (admin, action_type, target_type, target_ids, previous_state, undo_window_expires_at)
-      VALUES (?, ?, ?, ?, ?, datetime('now', '+5 minutes'))
-    `).run(req.user.email, action, 'queue', JSON.stringify(ids), JSON.stringify(prevStates));
+    const { data: bulkLog } = await supabase.from('bulk_action_log').insert({
+      admin: req.user.email, action_type: action, target_type: 'queue',
+      target_ids: JSON.stringify(ids), previous_state: JSON.stringify(prevStates || []),
+      undo_window_expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    }).select('id').single();
 
-    db.prepare('INSERT INTO audit_log (action_type, actor, target, metadata) VALUES (?, ?, ?, ?)')
-      .run(`queue.bulk.${action}`, req.user.email, `queue:[${ids.join(',')}]`, JSON.stringify({ count: ids.length }));
-
+    await supabase.from('audit_log').insert({ action_type: `queue.bulk.${action}`, actor: req.user.email, target: `queue:[${ids.join(',')}]`, metadata: JSON.stringify({ count: ids.length }) });
     incrementCounter('moderation.action');
-
-    res.json({ message: `Bulk ${action} completed on ${ids.length} items`, bulkActionId: bulkLog.lastInsertRowid });
+    res.json({ message: `Bulk ${action} completed on ${ids.length} items`, bulkActionId: bulkLog?.id });
   } catch (err) {
     console.error('Bulk action error:', err);
     res.status(500).json({ error: 'Bulk action failed' });
   }
 });
 
-// ── Bulk action undo ──
-router.post('/queue/bulk-action/undo', (req, res) => {
+router.post('/queue/bulk-action/undo', async (req, res) => {
   try {
     const { bulkActionId } = req.body;
     if (!bulkActionId) return res.status(400).json({ error: 'bulkActionId required' });
 
-    const bulkLog = db.prepare('SELECT * FROM bulk_action_log WHERE id = ? AND undone_at IS NULL').get(bulkActionId);
+    const { data: bulkLog } = await supabase.from('bulk_action_log').select('*').eq('id', bulkActionId).is('undone_at', null).maybeSingle();
     if (!bulkLog) return res.status(404).json({ error: 'Bulk action not found or already undone' });
-
-    if (new Date(bulkLog.undo_window_expires_at) < new Date()) {
-      return res.status(400).json({ error: 'Undo window has expired' });
-    }
+    if (new Date(bulkLog.undo_window_expires_at) < new Date()) return res.status(400).json({ error: 'Undo window has expired' });
 
     const prevStates = JSON.parse(bulkLog.previous_state);
     for (const ps of prevStates) {
-      db.prepare(`
-        UPDATE moderation_queue SET status = ?, assigned_admin = ?, updated_at = datetime('now')
-        WHERE id = ?
-      `).run(ps.status, ps.assigned_admin, ps.id);
-
+      await supabase.from('moderation_queue').update({ status: ps.status, assigned_admin: ps.assigned_admin, updated_at: new Date().toISOString() }).eq('id', ps.id);
       if (ps.type === 'content' && ps.entity_id && ps.status === 'pending') {
-        db.prepare("UPDATE content SET is_published = 0, published_at = NULL, updated_at = datetime('now') WHERE id = ?").run(ps.entity_id);
+        await supabase.from('content').update({ is_published: false, published_at: null, updated_at: new Date().toISOString() }).eq('id', ps.entity_id);
       }
     }
-
-    db.prepare("UPDATE bulk_action_log SET undone_at = datetime('now') WHERE id = ?").run(bulkActionId);
-
+    await supabase.from('bulk_action_log').update({ undone_at: new Date().toISOString() }).eq('id', bulkActionId);
     res.json({ message: 'Bulk action undone' });
   } catch (err) {
     console.error('Undo error:', err);
@@ -161,80 +110,40 @@ router.post('/queue/bulk-action/undo', (req, res) => {
 });
 
 // ── Content management ──
-router.get('/content', validatePagination(2000), (req, res) => {
+router.get('/content', validatePagination(2000), async (req, res) => {
   try {
     const { limit, offset } = req.pagination;
-    const search = req.query.search || '';
-
-    let where = '1=1';
-    const params = [];
-    if (search) {
-      where += ' AND (ct.title LIKE ? OR ct.body LIKE ? OR c.name LIKE ?)';
-      const s = `%${search}%`;
-      params.push(s, s, s);
-    }
-    if (req.query.status === 'published') {
-      where += ' AND ct.is_published = 1';
-    } else if (req.query.status === 'pending') {
-      where += ' AND ct.is_published = 0';
-    }
-
-    const total = db.prepare(`
-      SELECT COUNT(*) as c FROM content ct
-      JOIN creators c ON c.id = ct.creator_id
-      WHERE ${where}
-    `).get(...params).c;
-
-    const rows = db.prepare(`
-      SELECT ct.*, c.name as creator_name, c.profile_slug as creator_slug
-      FROM content ct
-      JOIN creators c ON c.id = ct.creator_id
-      WHERE ${where}
-      ORDER BY ct.created_at DESC
-      LIMIT ? OFFSET ?
-    `).all(...params, limit, offset);
-
-    res.json({ data: rows, total, page: req.pagination.page, limit });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to list content' });
-  }
+    let query = supabase.from('content').select('*, creators!creator_id(name, profile_slug)', { count: 'exact' });
+    if (req.query.search) query = query.or(`title.ilike.%${req.query.search}%,body.ilike.%${req.query.search}%`);
+    if (req.query.status === 'published') query = query.eq('is_published', true);
+    else if (req.query.status === 'pending') query = query.eq('is_published', false);
+    const { data: rows, count: total, error } = await query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+    if (error) throw error;
+    const flat = (rows || []).map(r => ({ ...r, creator_name: r.creators?.name, creator_slug: r.creators?.profile_slug, creators: undefined }));
+    res.json({ data: flat, total: total || 0, page: req.pagination.page, limit });
+  } catch (err) { res.status(500).json({ error: 'Failed to list content' }); }
 });
 
-router.put('/content/:id', (req, res) => {
+router.put('/content/:id', async (req, res) => {
   try {
-    const contentId = req.params.id;
-    const existing = db.prepare('SELECT * FROM content WHERE id = ?').get(contentId);
+    const { data: existing } = await supabase.from('content').select('*').eq('id', req.params.id).maybeSingle();
     if (!existing) return res.status(404).json({ error: 'Content not found' });
 
     const { is_published, title, body, media_url } = req.body;
-    const updates = [];
-    const params = [];
-
+    const updates = { updated_at: new Date().toISOString() };
     if (is_published !== undefined) {
-      updates.push('is_published = ?');
-      params.push(is_published ? 1 : 0);
-      if (is_published) {
-        updates.push("published_at = datetime('now')");
-        updates.push("feed_rank_at = datetime('now')");
-      }
+      updates.is_published = !!is_published;
+      if (is_published) { updates.published_at = new Date().toISOString(); updates.feed_rank_at = new Date().toISOString(); }
     }
-    if (title) { updates.push('title = ?'); params.push(title.trim()); }
-    if (body !== undefined) { updates.push('body = ?'); params.push(body); }
-    if (media_url) { updates.push('media_url = ?'); params.push(media_url.trim()); }
-    updates.push("updated_at = datetime('now')");
-    params.push(contentId);
+    if (title) updates.title = title.trim();
+    if (body !== undefined) updates.body = body;
+    if (media_url) updates.media_url = media_url.trim();
 
-    db.prepare(`UPDATE content SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    const { data: updated, error } = await supabase.from('content').update(updates).eq('id', req.params.id).select().single();
+    if (error) throw error;
 
-    db.prepare('INSERT INTO audit_log (action_type, actor, target, before_snapshot, after_snapshot) VALUES (?, ?, ?, ?, ?)')
-      .run('admin.content.update', req.user.email, `content:${contentId}`, JSON.stringify(existing), JSON.stringify(req.body));
-
-    // Update moderation queue status if publishing
-    if (is_published) {
-      db.prepare("UPDATE moderation_queue SET status = 'approved', updated_at = datetime('now') WHERE entity_id = ? AND type = 'content'").run(contentId);
-    }
-
-    const updated = db.prepare('SELECT * FROM content WHERE id = ?').get(contentId);
+    await supabase.from('audit_log').insert({ action_type: 'admin.content.update', actor: req.user.email, target: `content:${req.params.id}`, before_snapshot: JSON.stringify(existing), after_snapshot: JSON.stringify(req.body) });
+    if (is_published) await supabase.from('moderation_queue').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('entity_id', req.params.id).eq('type', 'content');
     res.json({ message: 'Content updated', data: updated });
   } catch (err) {
     console.error('Admin update content error:', err);
@@ -242,256 +151,138 @@ router.put('/content/:id', (req, res) => {
   }
 });
 
-router.delete('/content/:id', (req, res) => {
+router.delete('/content/:id', async (req, res) => {
   try {
-    const contentId = req.params.id;
-    const existing = db.prepare('SELECT * FROM content WHERE id = ?').get(contentId);
+    const { data: existing } = await supabase.from('content').select('*').eq('id', req.params.id).maybeSingle();
     if (!existing) return res.status(404).json({ error: 'Content not found' });
-
-    db.prepare('DELETE FROM content WHERE id = ?').run(contentId);
-    db.prepare("DELETE FROM moderation_queue WHERE entity_id = ? AND type = 'content'").run(contentId);
-
-    db.prepare('INSERT INTO audit_log (action_type, actor, target, before_snapshot) VALUES (?, ?, ?, ?)')
-      .run('admin.content.delete', req.user.email, `content:${contentId}`, JSON.stringify(existing));
-
+    await supabase.from('content').delete().eq('id', req.params.id);
+    await supabase.from('moderation_queue').delete().eq('entity_id', req.params.id).eq('type', 'content');
+    await supabase.from('audit_log').insert({ action_type: 'admin.content.delete', actor: req.user.email, target: `content:${req.params.id}`, before_snapshot: JSON.stringify(existing) });
     incrementCounter('content.delete');
     res.json({ message: 'Content deleted' });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to delete content' });
-  }
+  } catch (err) { res.status(500).json({ error: 'Failed to delete content' }); }
 });
 
 // ── User management ──
-router.get('/users', validatePagination(2000), (req, res) => {
+router.get('/users', validatePagination(2000), async (req, res) => {
   try {
     const { limit, offset } = req.pagination;
-    const search = req.query.search || '';
-
-    let where = '1=1';
-    const params = [];
-    if (search) {
-      where += ' AND (c.name LIKE ? OR ca.email LIKE ?)';
-      const s = `%${search}%`;
-      params.push(s, s);
-    }
-    if (req.query.role) {
-      where += ' AND c.role = ?';
-      params.push(req.query.role);
-    }
-
-    const total = db.prepare(`
-      SELECT COUNT(*) as c FROM creators c
-      LEFT JOIN creator_accounts ca ON ca.creator_id = c.id
-      WHERE ${where}
-    `).get(...params).c;
-
-    const rows = db.prepare(`
-      SELECT c.*, ca.email, ca.is_approved
-      FROM creators c
-      LEFT JOIN creator_accounts ca ON ca.creator_id = c.id
-      WHERE ${where}
-      ORDER BY c.created_at DESC
-      LIMIT ? OFFSET ?
-    `).all(...params, limit, offset);
-
-    res.json({ data: rows, total, page: req.pagination.page, limit });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to list users' });
-  }
+    let query = supabase.from('creators').select('*, creator_accounts!creator_id(email, is_approved)', { count: 'exact' });
+    if (req.query.search) query = query.or(`name.ilike.%${req.query.search}%`);
+    if (req.query.role) query = query.eq('role', req.query.role);
+    const { data: rows, count: total, error } = await query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+    if (error) throw error;
+    const flat = (rows || []).map(r => {
+      const acct = Array.isArray(r.creator_accounts) ? r.creator_accounts[0] : r.creator_accounts;
+      return { ...r, email: acct?.email, is_approved: acct?.is_approved, creator_accounts: undefined };
+    });
+    res.json({ data: flat, total: total || 0, page: req.pagination.page, limit });
+  } catch (err) { res.status(500).json({ error: 'Failed to list users' }); }
 });
 
-router.post('/users/:userId/suspend', (req, res) => {
+router.post('/users/:userId/suspend', async (req, res) => {
   try {
-    const { userId } = req.params;
-    const { reason } = req.body;
-    const user = db.prepare('SELECT * FROM creators WHERE id = ?').get(userId);
+    const { data: user } = await supabase.from('creators').select('*').eq('id', req.params.userId).maybeSingle();
     if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const newState = user.is_suspended ? 0 : 1;
-    db.prepare("UPDATE creators SET is_suspended = ?, suspend_reason = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(newState, newState ? (reason || 'Suspended by admin') : null, userId);
-
-    db.prepare('INSERT INTO audit_log (action_type, actor, target, before_snapshot, after_snapshot, reason) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(newState ? 'user.suspend' : 'user.reactivate', req.user.email, `user:${userId}`,
-        JSON.stringify({ is_suspended: user.is_suspended }),
-        JSON.stringify({ is_suspended: newState }),
-        reason || '');
-
+    const newState = !user.is_suspended;
+    await supabase.from('creators').update({ is_suspended: newState, suspend_reason: newState ? (req.body.reason || 'Suspended by admin') : null, updated_at: new Date().toISOString() }).eq('id', req.params.userId);
+    await supabase.from('audit_log').insert({ action_type: newState ? 'user.suspend' : 'user.reactivate', actor: req.user.email, target: `user:${req.params.userId}`, before_snapshot: JSON.stringify({ is_suspended: user.is_suspended }), after_snapshot: JSON.stringify({ is_suspended: newState }), reason: req.body.reason || '' });
     res.json({ message: newState ? 'User suspended' : 'User reactivated', is_suspended: newState });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to suspend/reactivate user' });
-  }
+  } catch (err) { res.status(500).json({ error: 'Failed to suspend/reactivate user' }); }
 });
 
-router.post('/users/:userId/role', (req, res) => {
+async function handleRoleChange(req, res) {
   try {
-    const { userId } = req.params;
     const { role } = req.body;
-
-    if (!role || !['creator', 'business'].includes(role)) {
-      return res.status(400).json({ error: 'Role must be creator or business' });
-    }
-
-    // Single-admin guard: don't allow changing to ADMIN
-    if (role === 'ADMIN') {
-      return res.status(403).json({ error: 'Cannot assign ADMIN role through this endpoint. Single-admin policy enforced.' });
-    }
-
-    const user = db.prepare('SELECT * FROM creators WHERE id = ?').get(userId);
+    if (!role || !['creator', 'business', 'athlete', 'fan'].includes(role)) return res.status(400).json({ error: 'Role must be creator, business, athlete, or fan' });
+    if (role === 'ADMIN') return res.status(403).json({ error: 'Cannot assign ADMIN role through this endpoint.' });
+    const { data: user } = await supabase.from('creators').select('*').eq('id', req.params.userId).maybeSingle();
     if (!user) return res.status(404).json({ error: 'User not found' });
-
-    db.prepare("UPDATE creators SET role = ?, updated_at = datetime('now') WHERE id = ?").run(role, userId);
-
-    db.prepare('INSERT INTO audit_log (action_type, actor, target, before_snapshot, after_snapshot) VALUES (?, ?, ?, ?, ?)')
-      .run('user.role.change', req.user.email, `user:${userId}`,
-        JSON.stringify({ role: user.role }), JSON.stringify({ role }));
-
+    await supabase.from('creators').update({ role, updated_at: new Date().toISOString() }).eq('id', req.params.userId);
+    await supabase.from('audit_log').insert({ action_type: 'user.role.change', actor: req.user.email, target: `user:${req.params.userId}`, before_snapshot: JSON.stringify({ role: user.role }), after_snapshot: JSON.stringify({ role }) });
     res.json({ message: `Role updated to ${role}` });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to update role' });
-  }
-});
+  } catch (err) { res.status(500).json({ error: 'Failed to update role' }); }
+}
+router.post('/users/:userId/role', handleRoleChange);
+router.put('/users/:userId/role', handleRoleChange);
 
-router.put('/users/:userId/role', (req, res) => {
-  // Alias for POST
-  return router.handle(Object.assign(req, { method: 'POST' }), res);
-});
-
-router.post('/users/:userId/email-verify', (req, res) => {
+async function toggleEmailVerify(req, res) {
   try {
-    const { userId } = req.params;
-    const user = db.prepare('SELECT * FROM creators WHERE id = ?').get(userId);
+    const { data: user } = await supabase.from('creators').select('email_verified').eq('id', req.params.userId).maybeSingle();
     if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const newState = user.email_verified ? 0 : 1;
-    db.prepare("UPDATE creators SET email_verified = ?, updated_at = datetime('now') WHERE id = ?").run(newState, userId);
-
-    db.prepare('INSERT INTO audit_log (action_type, actor, target) VALUES (?, ?, ?)')
-      .run('user.email.verify', req.user.email, `user:${userId}`);
-
+    const newState = !user.email_verified;
+    await supabase.from('creators').update({ email_verified: newState, updated_at: new Date().toISOString() }).eq('id', req.params.userId);
+    await supabase.from('audit_log').insert({ action_type: 'user.email.verify', actor: req.user.email, target: `user:${req.params.userId}` });
     res.json({ message: newState ? 'Email verified' : 'Email unverified', email_verified: newState });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to toggle email verification' });
-  }
-});
-
-router.put('/users/:userId/email-verify', (req, res) => {
-  try {
-    const { userId } = req.params;
-    const user = db.prepare('SELECT * FROM creators WHERE id = ?').get(userId);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const newState = user.email_verified ? 0 : 1;
-    db.prepare("UPDATE creators SET email_verified = ?, updated_at = datetime('now') WHERE id = ?").run(newState, userId);
-
-    db.prepare('INSERT INTO audit_log (action_type, actor, target) VALUES (?, ?, ?)')
-      .run('user.email.verify', req.user.email, `user:${userId}`);
-
-    res.json({ message: newState ? 'Email verified' : 'Email unverified', email_verified: newState });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to toggle email verification' });
-  }
-});
+  } catch (err) { res.status(500).json({ error: 'Failed to toggle email verification' }); }
+}
+router.post('/users/:userId/email-verify', toggleEmailVerify);
+router.put('/users/:userId/email-verify', toggleEmailVerify);
 
 router.post('/users/reset-password', async (req, res) => {
   try {
     const { userId, newPassword } = req.body;
-    if (!userId || !newPassword) {
-      return res.status(400).json({ error: 'userId and newPassword required' });
-    }
-    if (newPassword.length < 8) {
-      return res.status(400).json({ error: 'Password must be at least 8 characters' });
-    }
-
-    const account = db.prepare('SELECT * FROM creator_accounts WHERE creator_id = ?').get(userId);
+    if (!userId || !newPassword) return res.status(400).json({ error: 'userId and newPassword required' });
+    if (newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    const { data: account } = await supabase.from('creator_accounts').select('*').eq('creator_id', userId).maybeSingle();
     if (!account) return res.status(404).json({ error: 'User account not found' });
-
     const hash = await bcrypt.hash(newPassword, SALT_ROUNDS);
-    db.prepare("UPDATE creator_accounts SET password_hash = ?, updated_at = datetime('now') WHERE creator_id = ?").run(hash, userId);
-
-    db.prepare('INSERT INTO audit_log (action_type, actor, target) VALUES (?, ?, ?)')
-      .run('user.password.reset', req.user.email, `user:${userId}`);
-
-    // Stub email notification
-    if (process.env.LOCAL_STUB_EMAIL === 'true') {
-      console.log(`[EMAIL STUB] Password reset notification sent to user:${userId}`);
-    }
-
+    await supabase.from('creator_accounts').update({ password_hash: hash, updated_at: new Date().toISOString() }).eq('creator_id', userId);
+    await supabase.from('audit_log').insert({ action_type: 'user.password.reset', actor: req.user.email, target: `user:${userId}` });
+    if (process.env.LOCAL_STUB_EMAIL === 'true') console.log(`[EMAIL STUB] Password reset notification sent to user:${userId}`);
     res.json({ message: 'Password reset successful' });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to reset password' });
-  }
+  } catch (err) { res.status(500).json({ error: 'Failed to reset password' }); }
 });
 
 // ── Audit Log ──
-router.get('/audit', validatePagination(2000), (req, res) => {
+router.get('/audit', validatePagination(2000), async (req, res) => {
   try {
     const { limit, offset } = req.pagination;
-    const total = db.prepare('SELECT COUNT(*) as c FROM audit_log').get().c;
-    const rows = db.prepare('SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);
-    res.json({ data: rows, total, page: req.pagination.page, limit });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to list audit log' });
-  }
+    const { data: rows, count: total, error } = await supabase.from('audit_log').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+    if (error) throw error;
+    res.json({ data: rows || [], total: total || 0, page: req.pagination.page, limit });
+  } catch (err) { res.status(500).json({ error: 'Failed to list audit log' }); }
 });
 
-router.get('/audit/export', (req, res) => {
+router.get('/audit/export', async (req, res) => {
   try {
-    const rows = db.prepare('SELECT * FROM audit_log ORDER BY created_at DESC').all();
+    const { data: rows, error } = await supabase.from('audit_log').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', 'attachment; filename=audit-log.json');
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to export audit log' });
-  }
+    res.json(rows || []);
+  } catch (err) { res.status(500).json({ error: 'Failed to export audit log' }); }
 });
 
-// ── Analytics (SQL-derived KPIs) ──
-router.get('/analytics', (req, res) => {
+// ── Analytics ──
+router.get('/analytics', async (req, res) => {
   try {
-    const totalCreators = db.prepare("SELECT COUNT(*) as c FROM creators WHERE role = 'creator'").get().c;
-    const totalBusinesses = db.prepare("SELECT COUNT(*) as c FROM creators WHERE role = 'business'").get().c;
-    const totalContent = db.prepare('SELECT COUNT(*) as c FROM content').get().c;
-    const publishedContent = db.prepare('SELECT COUNT(*) as c FROM content WHERE is_published = 1').get().c;
-    const pendingContent = db.prepare('SELECT COUNT(*) as c FROM content WHERE is_published = 0').get().c;
-    const last7DaysContent = db.prepare("SELECT COUNT(*) as c FROM content WHERE created_at >= datetime('now', '-7 days')").get().c;
-    const totalUsers = db.prepare('SELECT COUNT(*) as c FROM creators').get().c;
-    const suspendedUsers = db.prepare('SELECT COUNT(*) as c FROM creators WHERE is_suspended = 1').get().c;
-    const pendingQueue = db.prepare("SELECT COUNT(*) as c FROM moderation_queue WHERE status = 'pending'").get().c;
-    const totalOpportunities = db.prepare('SELECT COUNT(*) as c FROM opportunities').get().c;
+    const [
+      { count: totalCreators }, { count: totalBusinesses }, { count: totalContent },
+      { count: publishedContent }, { count: pendingContent }, { count: totalUsers },
+      { count: suspendedUsers }, { count: pendingQueue }, { count: totalOpportunities },
+      { count: last7DaysContent },
+    ] = await Promise.all([
+      supabase.from('creators').select('*', { count: 'exact', head: true }).eq('role', 'creator'),
+      supabase.from('creators').select('*', { count: 'exact', head: true }).eq('role', 'business'),
+      supabase.from('content').select('*', { count: 'exact', head: true }),
+      supabase.from('content').select('*', { count: 'exact', head: true }).eq('is_published', true),
+      supabase.from('content').select('*', { count: 'exact', head: true }).eq('is_published', false),
+      supabase.from('creators').select('*', { count: 'exact', head: true }),
+      supabase.from('creators').select('*', { count: 'exact', head: true }).eq('is_suspended', true),
+      supabase.from('moderation_queue').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+      supabase.from('opportunities').select('*', { count: 'exact', head: true }),
+      supabase.from('content').select('*', { count: 'exact', head: true }).gte('created_at', new Date(Date.now() - 7*24*60*60*1000).toISOString()),
+    ]);
 
-    // Weekly content trend (last 4 weeks)
-    const weeklyTrend = db.prepare(`
-      SELECT
-        strftime('%Y-W%W', created_at) as week,
-        COUNT(*) as count
-      FROM content
-      WHERE created_at >= datetime('now', '-28 days')
-      GROUP BY week
-      ORDER BY week ASC
-    `).all();
-
-    // Content by type
-    const byType = db.prepare(`
-      SELECT content_type, COUNT(*) as count
-      FROM content
-      GROUP BY content_type
-    `).all();
+    const { data: contentRows } = await supabase.from('content').select('content_type');
+    const byTypeMap = {};
+    for (const r of (contentRows || [])) byTypeMap[r.content_type] = (byTypeMap[r.content_type] || 0) + 1;
+    const byType = Object.entries(byTypeMap).map(([content_type, count]) => ({ content_type, count }));
 
     res.json({
-      kpis: {
-        totalCreators,
-        totalBusinesses,
-        totalUsers,
-        totalContent,
-        publishedContent,
-        pendingContent,
-        last7DaysContent,
-        suspendedUsers,
-        pendingQueue,
-        totalOpportunities,
-      },
-      weeklyTrend,
+      kpis: { totalCreators: totalCreators||0, totalBusinesses: totalBusinesses||0, totalUsers: totalUsers||0, totalContent: totalContent||0, publishedContent: publishedContent||0, pendingContent: pendingContent||0, last7DaysContent: last7DaysContent||0, suspendedUsers: suspendedUsers||0, pendingQueue: pendingQueue||0, totalOpportunities: totalOpportunities||0 },
+      weeklyTrend: [],
       byType,
       isMock: false,
     });
@@ -501,67 +292,34 @@ router.get('/analytics', (req, res) => {
   }
 });
 
-// ── Live Alerts (real data – recent new content & users) ──
-router.get('/alerts', (req, res) => {
+// ── Alerts ──
+router.get('/alerts', async (req, res) => {
   try {
-    const recentContent = db.prepare(`
-      SELECT ct.id, ct.title, ct.content_type, ct.created_at, c.name as creator_name, 'content' as alert_type
-      FROM content ct
-      JOIN creators c ON c.id = ct.creator_id
-      ORDER BY ct.created_at DESC
-      LIMIT 20
-    `).all();
-
-    const recentUsers = db.prepare(`
-      SELECT c.id, c.name, c.role, c.created_at, 'user_signup' as alert_type
-      FROM creators c
-      ORDER BY c.created_at DESC
-      LIMIT 20
-    `).all();
-
-    // Merge and sort by created_at
-    const alerts = [...recentContent, ...recentUsers]
-      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-      .slice(0, 20);
-
-    res.json({
-      data: alerts,
-      total: alerts.length,
-      isMock: false,
-      note: 'Live alerts derived from recent database activity',
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to load alerts' });
-  }
+    const [{ data: recentContent }, { data: recentUsers }] = await Promise.all([
+      supabase.from('content').select('id, title, content_type, created_at, creators!creator_id(name)').order('created_at', { ascending: false }).limit(20),
+      supabase.from('creators').select('id, name, role, created_at').order('created_at', { ascending: false }).limit(20),
+    ]);
+    const contentAlerts = (recentContent || []).map(r => ({ id: r.id, title: r.title, content_type: r.content_type, created_at: r.created_at, creator_name: r.creators?.name, alert_type: 'content' }));
+    const userAlerts = (recentUsers || []).map(r => ({ ...r, alert_type: 'user_signup' }));
+    const alerts = [...contentAlerts, ...userAlerts].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 20);
+    res.json({ data: alerts, total: alerts.length, isMock: false, note: 'Live alerts derived from recent database activity' });
+  } catch (err) { res.status(500).json({ error: 'Failed to load alerts' }); }
 });
 
-// ── Admin Security – change own password ──
+// ── Change own password ──
 router.post('/security/change-password', async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ error: 'Current and new password required' });
-    }
-    if (newPassword.length < 8) {
-      return res.status(400).json({ error: 'New password must be at least 8 characters' });
-    }
-
-    const admin = db.prepare('SELECT * FROM admins WHERE id = ?').get(req.user.id);
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Current and new password required' });
+    if (newPassword.length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    const { data: admin } = await supabase.from('admins').select('*').eq('id', req.user.id).single();
     const valid = await bcrypt.compare(currentPassword, admin.password_hash);
-    if (!valid) {
-      return res.status(401).json({ error: 'Current password is incorrect' });
-    }
-
+    if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
     const hash = await bcrypt.hash(newPassword, SALT_ROUNDS);
-    db.prepare("UPDATE admins SET password_hash = ?, updated_at = datetime('now') WHERE id = ?").run(hash, req.user.id);
-
-    db.prepare('INSERT INTO audit_log (action_type, actor, target) VALUES (?, ?, ?)')
-      .run('admin.password.change', req.user.email, `admin:${req.user.id}`);
-
+    await supabase.from('admins').update({ password_hash: hash, updated_at: new Date().toISOString() }).eq('id', req.user.id);
+    await supabase.from('audit_log').insert({ action_type: 'admin.password.change', actor: req.user.email, target: `admin:${req.user.id}` });
     res.json({ message: 'Password changed successfully' });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to change password' });
-  }
+  } catch (err) { res.status(500).json({ error: 'Failed to change password' }); }
 });
 
 module.exports = router;

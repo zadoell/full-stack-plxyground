@@ -3,7 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Refres
 import { useRouter } from 'expo-router';
 import { useAuth } from '../src/context/AuthContext';
 import api from '../src/utils/api';
-import { ContentCard, LoadingSpinner, EmptyState, ErrorState, InlineModal, NoticeBanner, useToast } from '../src/components/UIComponents';
+import { ContentCard, LoadingSpinner, SkeletonCardList, EmptyState, ErrorState, InlineModal, NoticeBanner, useToast } from '../src/components/UIComponents';
 
 export default function FeedScreen() {
   const router = useRouter();
@@ -108,7 +108,7 @@ export default function FeedScreen() {
 
       {/* Content */}
       {loading && !refreshing ? (
-        <LoadingSpinner />
+        <SkeletonCardList count={4} hasImage />
       ) : error ? (
         <ErrorState message={error} onRetry={() => fetchContent(1)} />
       ) : content.length === 0 ? (
@@ -152,23 +152,23 @@ export default function FeedScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f1f5f9' },
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
-  topBarTitle: { fontSize: 20, fontWeight: '800', color: '#111', letterSpacing: 1 },
+  container: { flex: 1, backgroundColor: '#07070E' },
+  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 18, backgroundColor: '#0A0A18', borderBottomWidth: 1, borderBottomColor: 'rgba(255,61,0,0.12)' },
+  topBarTitle: { fontSize: 20, fontWeight: '800', color: '#FF3D00', letterSpacing: 2 },
   topBarActions: { flexDirection: 'row', gap: 12 },
-  createBtn: { backgroundColor: '#2563eb', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
-  createBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  searchRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
-  searchInput: { flex: 1, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: '#111', backgroundColor: '#f9fafb' },
+  createBtn: { backgroundColor: '#FF3D00', paddingHorizontal: 18, paddingVertical: 10, borderRadius: 10, shadowColor: '#FF3D00', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 10 },
+  createBtnText: { color: '#FFF', fontWeight: '800', fontSize: 13 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#0A0A18', borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)' },
+  searchInput: { flex: 1, borderWidth: 1.5, borderColor: 'rgba(255,61,0,0.2)', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12, fontSize: 14, color: '#F0F0FA', backgroundColor: 'rgba(255,61,0,0.04)' },
   clearBtn: { marginLeft: 8, padding: 8 },
-  clearBtnText: { fontSize: 16, color: '#6b7280' },
+  clearBtnText: { fontSize: 16, color: '#8A94B8' },
   scrollView: { flex: 1 },
   feedContent: { padding: 16, maxWidth: 700, alignSelf: 'center', width: '100%' },
-  loadMoreBtn: { alignItems: 'center', paddingVertical: 16 },
-  loadMoreText: { color: '#2563eb', fontWeight: '600', fontSize: 14 },
-  bottomNav: { flexDirection: 'row', backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#e5e7eb', paddingVertical: 8 },
+  loadMoreBtn: { alignItems: 'center', paddingVertical: 18 },
+  loadMoreText: { color: '#FF3D00', fontWeight: '700', fontSize: 14 },
+  bottomNav: { flexDirection: 'row', backgroundColor: '#0A0A18', borderTopWidth: 1, borderTopColor: 'rgba(255,61,0,0.15)', paddingVertical: 10 },
   navItem: { flex: 1, alignItems: 'center', paddingVertical: 4 },
   navIcon: { fontSize: 20 },
-  navLabel: { fontSize: 10, color: '#6b7280', marginTop: 2 },
-  navActive: { color: '#2563eb' },
+  navLabel: { fontSize: 10, color: '#4A5278', marginTop: 3, fontWeight: '500' },
+  navActive: { color: '#FF3D00' },
 });

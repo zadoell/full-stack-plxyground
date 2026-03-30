@@ -1,6 +1,8 @@
 // PLXYGROUND Admin Panel – Single Page Application
-const API_BASE = 'http://localhost:3011';
-let token = localStorage.getItem('plxy_admin_token');
+// API_BASE is read from window.PLXY_ADMIN_CONFIG (set in config.js) with localhost fallback.
+// For production, edit admin-panel/config.js to point to your API server.
+const API_BASE = (window.PLXY_ADMIN_CONFIG && window.PLXY_ADMIN_CONFIG.API_BASE) || 'http://localhost:3011';
+let token = sessionStorage.getItem('plxy_admin_token');
 let currentPage = 'queue';
 let alertInterval = null;
 
@@ -56,6 +58,14 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+// ── Safe URL check – only allows http and https, blocks javascript: data: etc. ──
+function isSafeUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch { return false; }
+}
+
 // ── Auth ──
 async function handleLogin() {
   const email = document.getElementById('login-email').value.trim();
@@ -72,7 +82,7 @@ async function handleLogin() {
   try {
     const res = await apiFetch('/api/admin/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
     token = res.token;
-    localStorage.setItem('plxy_admin_token', token);
+    sessionStorage.setItem('plxy_admin_token', token);
     showApp();
     showToast('Welcome to PLXYGROUND Admin', 'success');
   } catch (err) {
@@ -93,7 +103,7 @@ document.addEventListener('keydown', (e) => {
 
 function handleSignOut() {
   token = null;
-  localStorage.removeItem('plxy_admin_token');
+  sessionStorage.removeItem('plxy_admin_token');
   if (alertInterval) { clearInterval(alertInterval); alertInterval = null; }
   document.getElementById('app-page').classList.add('hidden');
   document.getElementById('login-page').classList.remove('hidden');
@@ -113,19 +123,24 @@ function navigate(page) {
   document.querySelectorAll('.sidebar-item[data-page]').forEach(el => {
     el.classList.toggle('active', el.dataset.page === page);
   });
-  const titles = { queue: 'Moderation Queue', content: 'Content Management', users: 'User Management', audit: 'Audit Log', analytics: 'Analytics', alerts: 'Live Alerts', security: 'Admin Security' };
+  const titles = { queue: 'Moderation Queue', content: 'Content Management', 'add-content': 'Add Content', users: 'User Management', 'add-user': 'Add User', audit: 'Audit Log', analytics: 'Analytics', alerts: 'Live Alerts', security: 'Admin Security' };
   document.getElementById('page-title').textContent = titles[page] || page;
   
   if (alertInterval && page !== 'alerts') { clearInterval(alertInterval); alertInterval = null; }
   
-  const loaders = { queue: loadQueue, content: loadContent, users: loadUsers, audit: loadAudit, analytics: loadAnalytics, alerts: loadAlerts, security: loadSecurity };
+  const loaders = { queue: loadQueue, content: loadContent, 'add-content': loadAddContent, users: loadUsers, 'add-user': loadAddUser, audit: loadAudit, analytics: loadAnalytics, alerts: loadAlerts, security: loadSecurity };
   if (loaders[page]) loaders[page]();
 }
 
 function handleGlobalSearch(val) {
-  // Trigger search on current page
+  if (!val || val.length < 2) return;
+  // Enhanced global search – searches across content and users simultaneously
   if (currentPage === 'content') loadContent(val);
   else if (currentPage === 'users') loadUsers(val);
+  else {
+    // Cross-page search: show results from both content and users
+    loadGlobalSearchResults(val);
+  }
 }
 
 // ── Queue Page ──
@@ -190,9 +205,29 @@ async function bulkQueueAction(action) {
   if (ids.length === 0) { showToast('Select items first', 'error'); return; }
   try {
     const res = await apiFetch('/api/admin/queue/bulk-action', { method: 'POST', body: JSON.stringify({ ids, action }) });
-    showToast(`${action} completed on ${ids.length} items`, 'success');
+    const bulkId = res.bulkActionId;
+    // Show undo toast
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = 'toast toast-success';
+    toast.innerHTML = `<span>${action} completed on ${ids.length} items</span>
+      ${bulkId ? `<button class="btn btn-ghost btn-sm" style="margin-left:12px;border:1px solid #fff;color:#fff;" onclick="undoBulkAction(${bulkId},this.parentElement)">Undo (5 min)</button>` : ''}
+      <button class="toast-close" onclick="this.parentElement.remove()">✕</button>`;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 15000);
     loadQueue();
   } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function undoBulkAction(bulkId, toastEl) {
+  try {
+    await apiFetch('/api/admin/queue/bulk-action/undo', { method: 'POST', body: JSON.stringify({ bulkActionId: bulkId }) });
+    showToast('Bulk action undone successfully', 'success');
+    if (toastEl) toastEl.remove();
+    loadQueue();
+  } catch (err) {
+    showToast(`Undo failed: ${err.message}`, 'error');
+  }
 }
 
 async function singleQueueAction(id, action) {
@@ -229,7 +264,7 @@ async function loadContent(searchVal) {
                 <td><span class="type-pill">${escapeHtml(r.content_type)}</span></td>
                 <td><span class="status-badge status-${r.is_published ? 'published' : 'pending'}">${r.is_published ? 'Published' : 'Pending'}</span></td>
                 <td><div class="content-body">${escapeHtml(r.body || '')}</div></td>
-                <td>${r.media_url ? `<a href="${escapeHtml(r.media_url)}" target="_blank" class="btn btn-ghost btn-sm">🖼 View</a>` : '-'}</td>
+                <td>${r.media_url && isSafeUrl(r.media_url) ? `<a href="${escapeHtml(r.media_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm">🖼 View</a>` : '-'}</td>
                 <td>${new Date(r.created_at).toLocaleDateString()}</td>
                 <td style="white-space:nowrap;">
                   ${r.is_published
@@ -325,10 +360,11 @@ async function toggleSuspend(userId) {
 }
 
 function changeRole(userId, currentRole) {
-  const newRole = currentRole === 'creator' ? 'business' : 'creator';
-  showModal('Change Role', `<p>Change role from <strong>${escapeHtml(currentRole)}</strong> to <strong>${newRole}</strong>?</p><p style="color:#999;font-size:13px;margin-top:8px;">Note: ADMIN role cannot be assigned (single-admin policy).</p>`, [
-    { label: `Change to ${newRole}`, cls: 'btn-primary', onclick: `confirmChangeRole(${userId},'${newRole}')` }
-  ]);
+  const roleOptions = ['creator', 'business', 'athlete'];
+  const optionsHtml = roleOptions.filter(r => r !== currentRole).map(r => 
+    `<button class="btn btn-primary" style="margin:4px;" onclick="confirmChangeRole(${userId},'${r}')">${r.charAt(0).toUpperCase() + r.slice(1)}</button>`
+  ).join('');
+  showModal('Change Role', `<p>Current role: <strong>${escapeHtml(currentRole)}</strong></p><p>Select new role:</p><div style="margin-top:12px;">${optionsHtml}</div><p style="color:#999;font-size:13px;margin-top:12px;">Note: ADMIN role cannot be assigned (single-admin policy).</p>`, []);
 }
 
 async function confirmChangeRole(userId, role) {
@@ -358,9 +394,19 @@ function resetPassword(userId, name) {
   ]);
 }
 
+function validatePasswordStrength(pw) {
+  if (!pw || pw.length < 8) return 'Password must be at least 8 characters';
+  if (!/[A-Z]/.test(pw)) return 'Password must contain at least one uppercase letter';
+  if (!/[a-z]/.test(pw)) return 'Password must contain at least one lowercase letter';
+  if (!/[0-9]/.test(pw)) return 'Password must contain at least one number';
+  if (!/[^A-Za-z0-9]/.test(pw)) return 'Password must contain at least one special character';
+  return null;
+}
+
 async function confirmResetPassword(userId) {
   const pw = document.getElementById('reset-pw-input').value;
-  if (!pw || pw.length < 8) { showToast('Password must be at least 8 characters', 'error'); return; }
+  const pwErr = validatePasswordStrength(pw);
+  if (pwErr) { showToast(pwErr, 'error'); return; }
   closeModal();
   try {
     await apiFetch('/api/admin/users/reset-password', { method: 'POST', body: JSON.stringify({ userId, newPassword: pw }) });
@@ -379,7 +425,7 @@ async function loadAudit() {
       <div class="table-container">
         <div class="table-toolbar">
           <span style="font-weight:600;">${rows.length} entries</span>
-          <a href="${API_BASE}/api/admin/audit/export" target="_blank" class="btn btn-ghost btn-sm" onclick="this.href='${API_BASE}/api/admin/audit/export?token='+token">📥 Export JSON</a>
+          <button class="btn btn-ghost btn-sm" onclick="exportAuditLog()">📥 Export JSON</button>
           <button class="btn btn-ghost btn-sm" onclick="loadAudit()">↻ Refresh</button>
         </div>
         <div style="overflow-x:auto;">
@@ -410,6 +456,25 @@ function formatJson(str) {
   try { return JSON.stringify(JSON.parse(str), null, 2); } catch { return str; }
 }
 
+// Export audit log via fetch (keeps token in Authorization header, not URL)
+async function exportAuditLog() {
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/audit/export`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!res.ok) { showToast('Export failed', 'error'); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'audit-log.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    showToast('Export failed: ' + err.message, 'error');
+  }
+}
+
 // ── Analytics Page ──
 async function loadAnalytics() {
   const el = document.getElementById('page-content');
@@ -426,6 +491,7 @@ async function loadAnalytics() {
       <div class="kpi-grid">
         <div class="kpi-card"><div class="kpi-label">Total Creators</div><div class="kpi-value">${k.totalCreators}</div></div>
         <div class="kpi-card"><div class="kpi-label">Total Businesses</div><div class="kpi-value">${k.totalBusinesses}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Total Athletes</div><div class="kpi-value">${k.totalAthletes}</div></div>
         <div class="kpi-card"><div class="kpi-label">Total Users</div><div class="kpi-value">${k.totalUsers}</div></div>
         <div class="kpi-card"><div class="kpi-label">Total Content</div><div class="kpi-value">${k.totalContent}</div></div>
         <div class="kpi-card"><div class="kpi-label">Published</div><div class="kpi-value" style="color:var(--success);">${k.publishedContent}</div></div>
@@ -534,7 +600,8 @@ async function changeAdminPassword() {
   const msgEl = document.getElementById('sec-message');
 
   if (!currentPassword || !newPassword) { msgEl.textContent = 'All fields required'; msgEl.style.color = '#dc2626'; msgEl.style.display = 'block'; return; }
-  if (newPassword.length < 8) { msgEl.textContent = 'New password must be at least 8 characters'; msgEl.style.color = '#dc2626'; msgEl.style.display = 'block'; return; }
+  const secPwErr = validatePasswordStrength(newPassword);
+  if (secPwErr) { msgEl.textContent = secPwErr; msgEl.style.color = '#dc2626'; msgEl.style.display = 'block'; return; }
   if (newPassword !== confirmPw) { msgEl.textContent = 'Passwords do not match'; msgEl.style.color = '#dc2626'; msgEl.style.display = 'block'; return; }
 
   try {
@@ -554,11 +621,200 @@ async function changeAdminPassword() {
   }
 }
 
+// ── Add User Page ──
+function loadAddUser() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div style="max-width:520px;">
+      <div class="table-container" style="padding:24px;">
+        <h3 style="font-size:18px;font-weight:700;margin-bottom:4px;">Create New User</h3>
+        <p style="color:#6b7280;font-size:13px;margin-bottom:20px;">Add a creator, business, athlete, or fan account. The user will be auto-verified.</p>
+        <label class="form-label">Full Name</label>
+        <input type="text" id="add-user-name" class="form-input" placeholder="e.g. Jane Doe">
+        <label class="form-label" style="margin-top:12px;">Email</label>
+        <input type="email" id="add-user-email" class="form-input" placeholder="jane@example.com">
+        <label class="form-label" style="margin-top:12px;">Role</label>
+        <select id="add-user-role" class="form-input">
+          <option value="creator">Creator</option>
+          <option value="business">Business</option>
+          <option value="athlete">Athlete</option>
+          <option value="fan">Fan</option>
+        </select>
+        <label class="form-label" style="margin-top:12px;">Password</label>
+        <input type="password" id="add-user-pw" class="form-input" placeholder="Min 8 characters">
+        <div id="add-user-msg" style="margin-top:12px;font-size:13px;display:none;"></div>
+        <div style="display:flex;gap:12px;margin-top:20px;">
+          <button class="btn btn-primary" onclick="submitAddUser()">Create User</button>
+          <button class="btn btn-ghost" onclick="navigate('users')">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function submitAddUser() {
+  const name = document.getElementById('add-user-name').value.trim();
+  const email = document.getElementById('add-user-email').value.trim();
+  const role = document.getElementById('add-user-role').value;
+  const password = document.getElementById('add-user-pw').value;
+  const msgEl = document.getElementById('add-user-msg');
+
+  if (!name || !email || !password) {
+    msgEl.textContent = 'All fields are required';
+    msgEl.style.color = '#dc2626'; msgEl.style.display = 'block'; return;
+  }
+  const pwErr = validatePasswordStrength(password);
+  if (pwErr) {
+    msgEl.textContent = pwErr;
+    msgEl.style.color = '#dc2626'; msgEl.style.display = 'block'; return;
+  }
+
+  try {
+    const res = await apiFetch('/api/admin/users', { method: 'POST', body: JSON.stringify({ name, email, password, role }) });
+    showToast(`User "${name}" created (ID: ${res.userId})`, 'success');
+    navigate('users');
+  } catch (err) {
+    msgEl.textContent = err.message;
+    msgEl.style.color = '#dc2626'; msgEl.style.display = 'block';
+  }
+}
+
+// ── Add Content Page ──
+function loadAddContent() {
+  const el = document.getElementById('page-content');
+  // Fetch users for the creator dropdown
+  apiFetch('/api/admin/users?limit=500').then(res => {
+    const users = res.data || [];
+    el.innerHTML = `
+      <div style="max-width:640px;">
+        <div class="table-container" style="padding:24px;">
+          <h3 style="font-size:18px;font-weight:700;margin-bottom:4px;">Create Content</h3>
+          <p style="color:#6b7280;font-size:13px;margin-bottom:20px;">Add content on behalf of a user. Choose the author and type.</p>
+          <label class="form-label">Title</label>
+          <input type="text" id="add-content-title" class="form-input" placeholder="Content title">
+          <label class="form-label" style="margin-top:12px;">Body</label>
+          <textarea id="add-content-body" class="form-input" rows="5" placeholder="Content body..." style="resize:vertical;"></textarea>
+          <label class="form-label" style="margin-top:12px;">Content Type</label>
+          <select id="add-content-type" class="form-input">
+            <option value="blog_post">Blog Post</option>
+            <option value="video">Video</option>
+            <option value="image">Image</option>
+            <option value="podcast">Podcast</option>
+            <option value="article">Article</option>
+          </select>
+          <label class="form-label" style="margin-top:12px;">Author</label>
+          <select id="add-content-creator" class="form-input">
+            ${users.map(u => `<option value="${u.id}">${escapeHtml(u.name)} (${escapeHtml(u.role)})</option>`).join('')}
+          </select>
+          <label style="display:flex;align-items:center;gap:8px;margin-top:16px;font-size:14px;cursor:pointer;">
+            <input type="checkbox" id="add-content-publish"> Publish immediately
+          </label>
+          <div id="add-content-msg" style="margin-top:12px;font-size:13px;display:none;"></div>
+          <div style="display:flex;gap:12px;margin-top:20px;">
+            <button class="btn btn-primary" onclick="submitAddContent()">Create Content</button>
+            <button class="btn btn-ghost" onclick="navigate('content')">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+  }).catch(err => {
+    el.innerHTML = `<div style="text-align:center;padding:40px;color:#dc2626;">Failed to load users: ${escapeHtml(err.message)}<br><button class="btn btn-primary" onclick="loadAddContent()">Retry</button></div>`;
+  });
+}
+
+async function submitAddContent() {
+  const title = document.getElementById('add-content-title').value.trim();
+  const body = document.getElementById('add-content-body').value;
+  const content_type = document.getElementById('add-content-type').value;
+  const creator_id = parseInt(document.getElementById('add-content-creator').value);
+  const is_published = document.getElementById('add-content-publish').checked;
+  const msgEl = document.getElementById('add-content-msg');
+
+  if (!title || !body) {
+    msgEl.textContent = 'Title and body are required';
+    msgEl.style.color = '#dc2626'; msgEl.style.display = 'block'; return;
+  }
+
+  try {
+    await apiFetch('/api/admin/content', { method: 'POST', body: JSON.stringify({ title, body, content_type, creator_id, is_published }) });
+    showToast(`Content "${title}" created`, 'success');
+    navigate('content');
+  } catch (err) {
+    msgEl.textContent = err.message;
+    msgEl.style.color = '#dc2626'; msgEl.style.display = 'block';
+  }
+}
+
+// ── Global Search Results ──
+async function loadGlobalSearchResults(query) {
+  const el = document.getElementById('page-content');
+  // Use textContent (not innerHTML) to safely set the search query in the title
+  document.getElementById('page-title').textContent = `Search: "${query}"`;
+  el.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">Searching...</div>';
+  try {
+    const [contentRes, usersRes] = await Promise.all([
+      apiFetch(`/api/admin/content?limit=50&search=${encodeURIComponent(query)}`),
+      apiFetch(`/api/admin/users?limit=50&search=${encodeURIComponent(query)}`)
+    ]);
+    const content = contentRes.data || [];
+    const users = usersRes.data || [];
+
+    el.innerHTML = `
+      <div style="margin-bottom:24px;">
+        <h3 style="font-size:16px;font-weight:700;margin-bottom:12px;">Content (${content.length} results)</h3>
+        ${content.length === 0 ? '<p style="color:#999;font-size:14px;">No content matches</p>' : `
+        <div class="table-container"><div style="overflow-x:auto;">
+          <table>
+            <thead><tr><th>Title</th><th>Creator</th><th>Type</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>
+              ${content.map(r => `
+                <tr>
+                  <td><strong>${escapeHtml(r.title)}</strong></td>
+                  <td>${escapeHtml(r.creator_name || '-')}</td>
+                  <td><span class="type-pill">${escapeHtml(r.content_type)}</span></td>
+                  <td><span class="status-badge status-${r.is_published ? 'published' : 'pending'}">${r.is_published ? 'Published' : 'Pending'}</span></td>
+                  <td>
+                    ${r.is_published
+                      ? `<button class="btn btn-warning btn-sm" onclick="togglePublish(${r.id},false)">Unpublish</button>`
+                      : `<button class="btn btn-success btn-sm" onclick="togglePublish(${r.id},true)">Publish</button>`
+                    }
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div></div>`}
+      </div>
+      <div>
+        <h3 style="font-size:16px;font-weight:700;margin-bottom:12px;">Users (${users.length} results)</h3>
+        ${users.length === 0 ? '<p style="color:#999;font-size:14px;">No user matches</p>' : `
+        <div class="table-container"><div style="overflow-x:auto;">
+          <table>
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>
+              ${users.map(r => `
+                <tr>
+                  <td><strong>${escapeHtml(r.name)}</strong></td>
+                  <td>${escapeHtml(r.email || '-')}</td>
+                  <td><span class="type-pill">${escapeHtml(r.role)}</span></td>
+                  <td><span class="status-badge status-${r.is_suspended ? 'suspended' : 'active'}">${r.is_suspended ? 'Suspended' : 'Active'}</span></td>
+                  <td>
+                    <button class="btn ${r.is_suspended ? 'btn-success' : 'btn-warning'} btn-sm" onclick="toggleSuspend(${r.id})">${r.is_suspended ? 'Reactivate' : 'Suspend'}</button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div></div>`}
+      </div>`;
+  } catch (err) {
+    el.innerHTML = `<div style="text-align:center;padding:40px;color:#dc2626;">Search failed: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
 // ── Init ──
 if (token) {
   // Validate token by trying a request
   apiFetch('/api/admin/analytics').then(() => showApp()).catch(() => {
     token = null;
-    localStorage.removeItem('plxy_admin_token');
+    sessionStorage.removeItem('plxy_admin_token');
   });
 }

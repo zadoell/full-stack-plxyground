@@ -1,13 +1,15 @@
 import React from 'react';
 import { ScrollView, Text, TouchableOpacity, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useBack } from '../src/hooks/useBack';
 
 export default function TermsScreen() {
   const router = useRouter();
+  const goBack = useBack('/');
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityRole="button"><Text style={styles.backBtnText}>← Back</Text></TouchableOpacity>
+      <TouchableOpacity onPress={() => goBack()} style={styles.backBtn} accessibilityRole="button"><Text style={styles.backBtnText}>← Back</Text></TouchableOpacity>
 
       <Text style={styles.title}>Terms of Service</Text>
       <Text style={styles.updated}>Last Updated: March 1, 2026</Text>
@@ -48,13 +50,13 @@ export default function TermsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  content: { padding: 24, maxWidth: 700, alignSelf: 'center', width: '100%' },
-  backBtn: { marginBottom: 16 },
-  backBtnText: { color: '#2563eb', fontSize: 14, fontWeight: '600' },
-  title: { fontSize: 28, fontWeight: '800', color: '#111', marginBottom: 4 },
-  updated: { fontSize: 13, color: '#9ca3af', marginBottom: 28 },
-  heading: { fontSize: 18, fontWeight: '700', color: '#111', marginTop: 24, marginBottom: 8 },
-  body: { fontSize: 15, color: '#374151', lineHeight: 24 },
+  container: { flex: 1, backgroundColor: '#07070E' },
+  content: { padding: 28, maxWidth: 700, alignSelf: 'center', width: '100%' },
+  backBtn: { marginBottom: 20 },
+  backBtnText: { color: '#FF3D00', fontSize: 14, fontWeight: '600' },
+  title: { fontSize: 28, fontWeight: '800', color: '#F0F0FA', marginBottom: 6, letterSpacing: -0.3 },
+  updated: { fontSize: 13, color: '#4A5278', marginBottom: 32 },
+  heading: { fontSize: 16, fontWeight: '800', color: '#FF3D00', marginTop: 28, marginBottom: 10, letterSpacing: 0.5, textTransform: 'uppercase' },
+  body: { fontSize: 15, color: '#8A94B8', lineHeight: 26 },
   bottomPadding: { height: 40 },
 });

@@ -11,20 +11,34 @@ export default function RootLayout() {
         <StatusBar style="auto" />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="index" />
+          <Stack.Screen name="signup-choice" />
           <Stack.Screen name="signup" />
           <Stack.Screen name="login" />
           <Stack.Screen name="business-signup" />
           <Stack.Screen name="business-login" />
+          <Stack.Screen name="forgot-password" />
+          <Stack.Screen name="reset-password" />
+          <Stack.Screen name="suspended" />
+          <Stack.Screen name="dashboard" />
           <Stack.Screen name="feed" />
           <Stack.Screen name="content/[id]" />
           <Stack.Screen name="create-post" />
           <Stack.Screen name="edit-post/[id]" />
+          <Stack.Screen name="my-content" />
           <Stack.Screen name="profile/[id]" />
           <Stack.Screen name="edit-profile" />
           <Stack.Screen name="discover" />
+          <Stack.Screen name="notifications" />
+          <Stack.Screen name="opportunities" />
+          <Stack.Screen name="my-opportunities" />
+          <Stack.Screen name="create-opportunity" />
+          <Stack.Screen name="edit-opportunity/[id]" />
+          <Stack.Screen name="analytics" />
+          <Stack.Screen name="change-password" />
           <Stack.Screen name="settings" />
           <Stack.Screen name="terms" />
           <Stack.Screen name="privacy" />
+          <Stack.Screen name="support" />
         </Stack>
       </View>
     </AuthProvider>

@@ -1,116 +1,59 @@
 // Creator routes
 const express = require('express');
-const db = require('../db');
+const supabase = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { validatePagination } = require('../middleware/validate');
 
 const router = express.Router();
 
-// ── GET /api/creators – list creators ──
-router.get('/', validatePagination(100), (req, res) => {
+router.get('/', validatePagination(100), async (req, res) => {
   try {
     const { limit, offset } = req.pagination;
-    const search = req.query.search || '';
-
-    let where = 'WHERE c.is_active = 1';
-    const params = [];
-    if (search) {
-      where += ' AND (c.name LIKE ? OR c.bio LIKE ? OR c.location LIKE ?)';
-      const s = `%${search}%`;
-      params.push(s, s, s);
-    }
-    if (req.query.role) {
-      where += ' AND c.role = ?';
-      params.push(req.query.role);
-    }
-
-    const total = db.prepare(`SELECT COUNT(*) as c FROM creators c ${where}`).get(...params).c;
-    const rows = db.prepare(`
-      SELECT c.*, ca.email
-      FROM creators c
-      LEFT JOIN creator_accounts ca ON ca.creator_id = c.id
-      ${where}
-      ORDER BY c.created_at DESC
-      LIMIT ? OFFSET ?
-    `).all(...params, limit, offset);
-
-    res.json({ data: rows, total, page: req.pagination.page, limit });
+    let query = supabase.from('creators').select('*, creator_accounts!creator_id(email)', { count: 'exact' }).eq('is_active', true);
+    if (req.query.search) query = query.or(`name.ilike.%${req.query.search}%,bio.ilike.%${req.query.search}%,location.ilike.%${req.query.search}%`);
+    if (req.query.role) query = query.eq('role', req.query.role);
+    const { data: rows, count: total, error } = await query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+    if (error) throw error;
+    const flat = (rows || []).map(r => { const a = Array.isArray(r.creator_accounts) ? r.creator_accounts[0] : r.creator_accounts; return { ...r, email: a?.email, creator_accounts: undefined }; });
+    res.json({ data: flat, total: total || 0, page: req.pagination.page, limit });
   } catch (err) {
     console.error('List creators error:', err);
     res.status(500).json({ error: 'Failed to list creators' });
   }
 });
 
-// ── GET /api/creators/:id ──
-router.get('/:id', (req, res) => {
+router.get('/slug/:slug', async (req, res) => {
   try {
-    const row = db.prepare(`
-      SELECT c.*, ca.email
-      FROM creators c
-      LEFT JOIN creator_accounts ca ON ca.creator_id = c.id
-      WHERE c.id = ?
-    `).get(req.params.id);
-
-    if (!row) return res.status(404).json({ error: 'Creator not found' });
-    res.json(row);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to get creator' });
-  }
+    const { data: row, error } = await supabase.from('creators').select('*, creator_accounts!creator_id(email)').eq('profile_slug', req.params.slug).maybeSingle();
+    if (error || !row) return res.status(404).json({ error: 'Creator not found' });
+    const a = Array.isArray(row.creator_accounts) ? row.creator_accounts[0] : row.creator_accounts;
+    res.json({ ...row, email: a?.email, creator_accounts: undefined });
+  } catch (err) { res.status(500).json({ error: 'Failed to get creator' }); }
 });
 
-// ── GET /api/creators/slug/:slug ──
-router.get('/slug/:slug', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const row = db.prepare(`
-      SELECT c.*, ca.email
-      FROM creators c
-      LEFT JOIN creator_accounts ca ON ca.creator_id = c.id
-      WHERE c.profile_slug = ?
-    `).get(req.params.slug);
-
-    if (!row) return res.status(404).json({ error: 'Creator not found' });
-    res.json(row);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to get creator' });
-  }
+    const { data: row, error } = await supabase.from('creators').select('*, creator_accounts!creator_id(email)').eq('id', req.params.id).maybeSingle();
+    if (error || !row) return res.status(404).json({ error: 'Creator not found' });
+    const a = Array.isArray(row.creator_accounts) ? row.creator_accounts[0] : row.creator_accounts;
+    res.json({ ...row, email: a?.email, creator_accounts: undefined });
+  } catch (err) { res.status(500).json({ error: 'Failed to get creator' }); }
 });
 
-// ── PUT /api/creators/me – update own profile ──
-router.put('/me', authenticate, (req, res) => {
+router.put('/me', authenticate, async (req, res) => {
   try {
     const { bio, location, social_links, name } = req.body;
-    const creatorId = req.user.creatorId;
-
-    // Validate social_links if provided
-    if (social_links) {
-      if (typeof social_links === 'string') {
-        try { JSON.parse(social_links); } catch {
-          return res.status(400).json({ error: 'social_links must be valid JSON' });
-        }
-      }
+    if (social_links && typeof social_links === 'string') {
+      try { JSON.parse(social_links); } catch { return res.status(400).json({ error: 'social_links must be valid JSON' }); }
     }
-
-    const updates = [];
-    const params = [];
-
-    if (name !== undefined) { updates.push('name = ?'); params.push(name.trim()); }
-    if (bio !== undefined) { updates.push('bio = ?'); params.push(bio.trim()); }
-    if (location !== undefined) { updates.push('location = ?'); params.push(location.trim()); }
-    if (social_links !== undefined) {
-      updates.push('social_links = ?');
-      params.push(typeof social_links === 'string' ? social_links : JSON.stringify(social_links));
-    }
-
-    if (updates.length === 0) {
-      return res.status(400).json({ error: 'No fields to update' });
-    }
-
-    updates.push("updated_at = datetime('now')");
-    params.push(creatorId);
-
-    db.prepare(`UPDATE creators SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-
-    const updated = db.prepare('SELECT * FROM creators WHERE id = ?').get(creatorId);
+    const updates = { updated_at: new Date().toISOString() };
+    if (name !== undefined) updates.name = name.trim();
+    if (bio !== undefined) updates.bio = bio.trim();
+    if (location !== undefined) updates.location = location.trim();
+    if (social_links !== undefined) updates.social_links = typeof social_links === 'string' ? JSON.parse(social_links) : social_links;
+    if (Object.keys(updates).length === 1) return res.status(400).json({ error: 'No fields to update' });
+    const { data: updated, error } = await supabase.from('creators').update(updates).eq('id', req.user.creatorId).select().single();
+    if (error) throw error;
     res.json({ message: 'Profile updated', data: updated });
   } catch (err) {
     console.error('Update profile error:', err);
