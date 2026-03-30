@@ -2,9 +2,12 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const { Resend } = require('resend');
 const supabase = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { incrementCounter } = require('../middleware/logger');
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
@@ -102,7 +105,12 @@ router.post('/forgot-password', async (req, res) => {
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
     await supabase.from('password_resets').upsert({ email: email.toLowerCase().trim(), code, expires_at: expiresAt }, { onConflict: 'email' });
-    console.log(`\n📧 Password reset code for ${email}: ${code}\n`);
+    await resend.emails.send({
+      from: 'PLXYGROUND <onboarding@resend.dev>',
+      to: email.toLowerCase().trim(),
+      subject: 'Your password reset code',
+      html: `<p>Your password reset code is: <strong>${code}</strong></p><p>This code expires in 15 minutes.</p>`,
+    });
     await supabase.from('audit_log').insert({ action_type: 'password.reset_requested', actor: email.toLowerCase().trim(), target: `email:${email}` });
 
     res.json({ message: 'If an account exists with that email, a reset code has been sent.' });
