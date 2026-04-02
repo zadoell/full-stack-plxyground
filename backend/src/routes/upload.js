@@ -51,12 +51,12 @@ router.post('/', authenticate, upload.single('file'), async (req, res) => {
 
     const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(storagePath);
 
-    supabase.from('audit_log').insert({
+    await supabase.from('audit_log').insert({
       action_type: 'file.upload',
       actor: req.user.email || `user:${req.user.creatorId || req.user.id}`,
       target: storagePath,
       metadata: JSON.stringify({ originalName: req.file.originalname, size: req.file.size, mimetype: req.file.mimetype }),
-    }).catch(err => console.error('Audit log error on upload:', err));
+    });
 
     res.json({
       message: 'File uploaded successfully',
